@@ -127,7 +127,7 @@ export default function App() {
   const syncFromJira = async () => {
     setSyncing(true); setSyncStatus(null);
     try {
-      const jql = encodeURIComponent('status not in ("Done","Backlog","Blocked") AND assignee is not EMPTY ORDER BY duedate ASC');
+      const jql = encodeURIComponent('status not in ("Done","Backlog","Blocked","Deployed") AND assignee is not EMPTY ORDER BY duedate ASC');
       const res = await fetch(`/api/jira?jql=${jql}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
