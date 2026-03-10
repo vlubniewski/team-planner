@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from "react";
-import { supabase } from './supabaseClient';
 
 const TEAM_MEMBERS = [
   { id: 1, name: "Alex Rivera", role: "Engineering Lead", color: "#3B82F6", light: "#DBEAFE" },
