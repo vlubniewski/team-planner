@@ -11,6 +11,7 @@ const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
 const SIDEBAR_W = 200;
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 const TODAY_KEY = TODAY.toISOString().slice(0,10);
+const DONE_COLOR = "#22C55E";
 
 function dateKey(d) { return new Date(d).toISOString().slice(0,10); }
 function isWeekend(d) { const day = new Date(d).getDay(); return day === 0 || day === 6; }
@@ -53,14 +54,10 @@ function getWeekGroups(days) {
   return groups;
 }
 
-// Given a start and end date key, compute which visible columns to span
 function getBarSpan(startKey, endKey, dayKeys) {
   const sIdx = dayKeys.findIndex(k => k >= startKey);
-  const eIdx = (() => {
-    let last = -1;
-    for (let i = dayKeys.length - 1; i >= 0; i--) { if (dayKeys[i] <= endKey) { last = i; break; } }
-    return last;
-  })();
+  let eIdx = -1;
+  for (let i = dayKeys.length - 1; i >= 0; i--) { if (dayKeys[i] <= endKey) { eIdx = i; break; } }
   if (sIdx === -1 || eIdx === -1 || eIdx < sIdx) return null;
   return { sIdx, span: eIdx - sIdx + 1 };
 }
@@ -81,6 +78,7 @@ export default function App() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [assignments, setAssignments] = useState([]);
   const [expanded, setExpanded] = useState({ 1: true, 2: true, 3: true, 4: true });
+  const [showDone, setShowDone] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({ title: "", memberId: 1, startKey: TODAY_KEY, endKey: dateKey(addDays(TODAY, 4)), fromJira: false, dueDateKey: null });
@@ -89,7 +87,6 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState(null);
   const [saveStatus, setSaveStatus] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [dragging, setDragging] = useState(null);
   const gridRef = useRef(null);
   const nextId = useRef(300);
   const [colW, setColW] = useState(0);
@@ -112,7 +109,6 @@ export default function App() {
     return () => { clearTimeout(t); window.removeEventListener("resize", measure); };
   }, [monthOffset, loading]);
 
-  // Load on mount
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -125,6 +121,7 @@ export default function App() {
             startKey: r.start_key, endKey: r.end_key,
             fromJira: r.from_jira, jiraKey: r.jira_key,
             status: r.status, dueDateKey: r.due_date_key,
+            resolvedKey: r.resolved_key, isDone: r.is_done,
           })));
         }
       } catch(e) { console.error("Load failed", e); }
@@ -158,7 +155,7 @@ export default function App() {
 
   const openAdd = (memberId, dk) => {
     setEditItem(null);
-    setForm({ title: "", memberId, startKey: dk, endKey: dateKey(addDays(new Date(dk), 4)), fromJira: false, dueDateKey: null });
+    setForm({ title: "", memberId, startKey: dk, endKey: dateKey(addDays(new Date(dk + "T12:00:00"), 4)), fromJira: false, dueDateKey: null });
     setShowModal(true);
   };
   const openEdit = (e, a) => {
@@ -168,8 +165,7 @@ export default function App() {
     setShowModal(true);
   };
   const save = () => {
-    if (!form.title.trim()) return;
-    if (form.endKey < form.startKey) return;
+    if (!form.title.trim() || form.endKey < form.startKey) return;
     if (editItem) updateAssignments(p => p.map(a => a.id === editItem.id ? { ...a, ...form } : a));
     else updateAssignments(p => [...p, { id: `manual-${nextId.current++}-${Date.now()}`, ...form }]);
     setShowModal(false);
@@ -179,26 +175,42 @@ export default function App() {
   const syncFromJira = async () => {
     setSyncing(true); setSyncStatus(null);
     try {
-      const jql = encodeURIComponent('status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC');
-      const res = await fetch(`/api/jira?jql=${jql}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const ja = (data.issues || []).map(issue => {
-        const { summary, assignee, duedate } = issue.fields;
+      // Fetch active items
+      const activeJql = encodeURIComponent('status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC');
+      // Fetch done/deployed items
+      const doneJql = encodeURIComponent('status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC');
+
+      const [activeRes, doneRes] = await Promise.all([
+        fetch(`/api/jira?jql=${activeJql}`),
+        fetch(`/api/jira?jql=${doneJql}`),
+      ]);
+
+      const activeData = await activeRes.json();
+      const doneData = await doneRes.json();
+
+      const mapIssue = (issue, isDone) => {
+        const { summary, assignee, duedate, resolutiondate } = issue.fields;
         const member = TEAM_MEMBERS.find(m => assignee && m.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase()));
         if (!member) return null;
         let dueDateKey = null;
         if (duedate) { const dd = new Date(duedate); dd.setHours(0,0,0,0); dueDateKey = dateKey(dd); }
-        return { id: `jira-${issue.id}`, title: summary, memberId: member.id, startKey: null, endKey: null, fromJira: true, jiraKey: issue.key, status: issue.fields.status?.name, dueDateKey };
-      }).filter(Boolean);
-      updateAssignments(p => [...p.filter(a => !a.fromJira), ...ja]);
-      setSyncStatus({ type: "success", message: `Synced ${ja.length} stories from WOPS` });
+        let resolvedKey = null;
+        if (resolutiondate) { const rd = new Date(resolutiondate); rd.setHours(0,0,0,0); resolvedKey = dateKey(rd); }
+        return { id: `jira-${issue.id}`, title: summary, memberId: member.id, startKey: null, endKey: null, fromJira: true, jiraKey: issue.key, status: issue.fields.status?.name, dueDateKey, resolvedKey, isDone: isDone || false };
+      };
+
+      const active = (activeData.issues || []).map(i => mapIssue(i, false)).filter(Boolean);
+      const done = (doneData.issues || []).map(i => mapIssue(i, true)).filter(Boolean);
+
+      updateAssignments(p => [...p.filter(a => !a.fromJira), ...active, ...done]);
+      setSyncStatus({ type: "success", message: `Synced ${active.length} active + ${done.length} completed from WOPS` });
     } catch(err) { setSyncStatus({ type: "error", message: `Sync failed: ${err.message}` }); }
     setSyncing(false);
   };
 
   const totalTasks = assignments.length;
-  const jiraTasks = assignments.filter(a => a.fromJira).length;
+  const jiraTasks = assignments.filter(a => a.fromJira && !a.isDone).length;
+  const doneTasks = assignments.filter(a => a.isDone).length;
   const manualTasks = assignments.filter(a => !a.fromJira).length;
   const monthLabel = monthGroups.map(g => g.label).join(" – ");
 
@@ -217,12 +229,18 @@ export default function App() {
           <button onClick={() => setMonthOffset(o => o + 1)} style={{ background: "none", border: "none", color: "#8B949E", cursor: "pointer", fontSize: 14, padding: "2px 4px" }}>›</button>
         </div>
         {monthOffset !== 0 && <button onClick={() => setMonthOffset(0)} style={{ background: "none", border: "1px solid #30363D", color: "#8B949E", fontSize: 11, padding: "3px 8px", borderRadius: 6, cursor: "pointer" }}>Today</button>}
+
+        {/* Done toggle */}
+        <button onClick={() => setShowDone(v => !v)} style={{ background: showDone ? "#0D2818" : "none", border: `1px solid ${showDone ? DONE_COLOR + "66" : "#30363D"}`, color: showDone ? DONE_COLOR : "#484F58", fontSize: 11, padding: "3px 10px", borderRadius: 6, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontWeight: 600, transition: "all 0.15s" }}>
+          <span style={{ fontSize: 9 }}>●</span> {showDone ? "Hide" : "Show"} Done
+        </button>
+
         <div style={{ flex: 1 }} />
         <SaveStatus status={saveStatus} />
-        <div style={{ display: "flex", gap: 20, alignItems: "center", marginLeft: 16, marginRight: 16 }}>
-          {[{ label: "Total", value: totalTasks }, { label: "Jira", value: jiraTasks, color: "#3B82F6" }, { label: "Manual", value: manualTasks, color: "#6366F1" }].map(s => (
+        <div style={{ display: "flex", gap: 16, alignItems: "center", marginLeft: 16, marginRight: 16 }}>
+          {[{ label: "Active", value: jiraTasks, color: "#3B82F6" }, { label: "Done", value: doneTasks, color: DONE_COLOR }, { label: "Manual", value: manualTasks, color: "#6366F1" }].map(s => (
             <div key={s.label} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: s.color || "#F0F6FC", lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.value}</div>
               <div style={{ fontSize: 10, color: "#484F58", marginTop: 1 }}>{s.label}</div>
             </div>
           ))}
@@ -274,9 +292,10 @@ export default function App() {
               </thead>
               <tbody>
                 {TEAM_MEMBERS.map(member => {
-                  const mTasks = assignments.filter(a => a.memberId === member.id);
+                  const allTasks = assignments.filter(a => a.memberId === member.id);
+                  const mTasks = allTasks.filter(a => showDone ? true : !a.isDone);
                   const isExpanded = expanded[member.id];
-                  const visibleDays = mTasks.filter(a => a.startKey && a.endKey).reduce((s, a) => {
+                  const visibleDays = allTasks.filter(a => a.startKey && a.endKey).reduce((s, a) => {
                     const bar = getBarSpan(a.startKey, a.endKey, dayKeys);
                     return s + (bar ? bar.span : 0);
                   }, 0);
@@ -301,7 +320,7 @@ export default function App() {
                           </div>
                         </div>
                       </td>
-                      {DAYS.map((d, i) => <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: dateKey(d) === TODAY_KEY ? "#1A1F2E33" : "transparent" }} onDragOver={e => e.preventDefault()} />)}
+                      {DAYS.map((d, i) => <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: dateKey(d) === TODAY_KEY ? "#1A1F2E33" : "transparent" }} />)}
                     </tr>,
 
                     isExpanded && mTasks.length === 0 && (
@@ -316,24 +335,21 @@ export default function App() {
                     isExpanded && mTasks.map(a => {
                       const bar = a.startKey && a.endKey ? getBarSpan(a.startKey, a.endKey, dayKeys) : null;
                       const dueIdx = a.dueDateKey ? dayKeys.findIndex(k => k === a.dueDateKey) : -1;
+                      const resolvedIdx = a.resolvedKey ? dayKeys.findIndex(k => k === a.resolvedKey) : -1;
 
-                      // Build cell array
                       const cells = [];
                       let i = 0;
                       while (i < NUM_DAYS) {
                         const dk = dayKeys[i];
                         const isToday = dk === TODAY_KEY;
-                        const isDueDay = a.fromJira && dueIdx === i;
                         const isBarStart = bar && bar.sIdx === i;
+                        const isDueDay = !a.isDone && a.fromJira && dueIdx === i;
+                        const isDoneDay = a.isDone && resolvedIdx === i;
 
                         if (isBarStart) {
                           cells.push(
-                            <td key={i} colSpan={bar.span}
-                              style={{ borderBottom: "1px solid #21262D", borderRight: "none", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }}
-                              onClick={e => openEdit(e, a)}>
-                              <div
-                                onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })}
-                                onMouseLeave={() => setTooltip(null)}
+                            <td key={i} colSpan={bar.span} style={{ borderBottom: "1px solid #21262D", borderRight: "none", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
+                              <div onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
                                 style={{ height: 22, borderRadius: 4, background: `linear-gradient(135deg,${member.color}EE,${member.color}99)`, borderLeft: `3px solid ${member.color}`, display: "flex", alignItems: "center", padding: "0 6px", boxShadow: `0 1px 4px ${member.color}44`, overflow: "hidden", cursor: "pointer" }}>
                                 <span style={{ fontSize: 10, fontWeight: 600, color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 2px rgba(0,0,0,.5)" }}>{a.title}</span>
                               </div>
@@ -350,12 +366,20 @@ export default function App() {
                             </td>
                           );
                           i++;
+                        } else if (isDoneDay) {
+                          cells.push(
+                            <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
+                              <div onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
+                                style={{ height: 22, borderRadius: 4, background: `${DONE_COLOR}22`, border: `1px dashed ${DONE_COLOR}88`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <span style={{ fontSize: 8, fontWeight: 800, color: DONE_COLOR }}>DONE</span>
+                              </div>
+                            </td>
+                          );
+                          i++;
                         } else {
-                          // Skip cells that are inside a bar span (already covered by colSpan)
                           if (bar && i > bar.sIdx && i < bar.sIdx + bar.span) { i++; continue; }
                           cells.push(
-                            <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", cursor: "crosshair" }}
-                              onClick={() => openAdd(member.id, dk)} />
+                            <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", cursor: "crosshair" }} onClick={() => openAdd(member.id, dk)} />
                           );
                           i++;
                         }
@@ -363,11 +387,10 @@ export default function App() {
 
                       return (
                         <tr key={`task-${a.id}`}>
-                          <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 10px 0 28px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14", cursor: "pointer" }}
-                            onClick={e => openEdit(e, a)}>
+                          <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 10px 0 28px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                              {a.fromJira && <span style={{ fontSize: 8, fontWeight: 700, background: "#1D3557", color: "#3B82F6", padding: "1px 3px", borderRadius: 3, flexShrink: 0 }}>J</span>}
-                              <span style={{ fontSize: 10, color: "#8B949E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 138, textDecoration: "underline dotted #484F58" }}>{a.title}</span>
+                              {a.fromJira && <span style={{ fontSize: 8, fontWeight: 700, background: a.isDone ? "#0D2818" : "#1D3557", color: a.isDone ? DONE_COLOR : "#3B82F6", padding: "1px 3px", borderRadius: 3, flexShrink: 0 }}>{a.isDone ? "✓" : "J"}</span>}
+                              <span style={{ fontSize: 10, color: a.isDone ? "#484F58" : "#8B949E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 138, textDecoration: a.isDone ? "line-through" : "underline dotted #484F58" }}>{a.title}</span>
                             </div>
                           </td>
                           {cells}
@@ -387,7 +410,8 @@ export default function App() {
           <div style={{ fontWeight: 700, color: "#F0F6FC", marginBottom: 4 }}>{tooltip.a.title}</div>
           <div style={{ color: "#8B949E", fontSize: 11 }}>{TEAM_MEMBERS.find(m => m.id === tooltip.a.memberId)?.name}</div>
           {tooltip.a.startKey && <div style={{ color: "#484F58", fontSize: 10, marginTop: 3 }}>{new Date(tooltip.a.startKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })} → {new Date(tooltip.a.endKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
-          {tooltip.a.dueDateKey && <div style={{ color: "#F59E0B", fontSize: 10, marginTop: 3 }}>Due {new Date(tooltip.a.dueDateKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
+          {tooltip.a.dueDateKey && !tooltip.a.isDone && <div style={{ color: "#F59E0B", fontSize: 10, marginTop: 3 }}>Due {new Date(tooltip.a.dueDateKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
+          {tooltip.a.resolvedKey && tooltip.a.isDone && <div style={{ color: DONE_COLOR, fontSize: 10, marginTop: 3 }}>Resolved {new Date(tooltip.a.resolvedKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
           {tooltip.a.status && <div style={{ color: "#8B949E", fontSize: 10, marginTop: 2 }}>Status: {tooltip.a.status}</div>}
           {tooltip.a.fromJira && tooltip.a.jiraKey && <div style={{ color: "#3B82F6", fontSize: 10, marginTop: 3 }}>↗ {tooltip.a.jiraKey} · click to open</div>}
         </div>
@@ -415,20 +439,18 @@ export default function App() {
                 <div style={{ display: "flex", gap: 10 }}>
                   <div style={{ flex: 1 }}>
                     <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Start Date</label>
-                    <input type="date" value={form.startKey} onChange={e => setForm(f => ({ ...f, startKey: e.target.value }))}
-                      style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer", colorScheme: "dark" }} />
+                    <input type="date" value={form.startKey} onChange={e => setForm(f => ({ ...f, startKey: e.target.value }))} style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer", colorScheme: "dark" }} />
                   </div>
                   <div style={{ flex: 1 }}>
                     <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>End Date</label>
-                    <input type="date" value={form.endKey} min={form.startKey} onChange={e => setForm(f => ({ ...f, endKey: e.target.value }))}
-                      style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer", colorScheme: "dark" }} />
+                    <input type="date" value={form.endKey} min={form.startKey} onChange={e => setForm(f => ({ ...f, endKey: e.target.value }))} style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer", colorScheme: "dark" }} />
                   </div>
                 </div>
               )}
               {form.endKey < form.startKey && <div style={{ fontSize: 11, color: "#F85149" }}>End date must be after start date.</div>}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 {editItem && <button onClick={() => del(editItem.id)} style={{ flex: 1, background: "transparent", border: "1px solid #F8514933", color: "#F85149", padding: 8, borderRadius: 6, fontSize: 12, cursor: "pointer", fontWeight: 600 }}>Delete</button>}
-                <button onClick={save} disabled={form.endKey < form.startKey} style={{ flex: 2, background: "#238636", border: "1px solid #2EA043", color: "white", padding: 8, borderRadius: 6, fontSize: 13, cursor: "pointer", fontWeight: 700, opacity: form.endKey < form.startKey ? 0.5 : 1 }}>{editItem ? "Save Changes" : "Add Assignment"}</button>
+                <button onClick={save} disabled={!form.fromJira && form.endKey < form.startKey} style={{ flex: 2, background: "#238636", border: "1px solid #2EA043", color: "white", padding: 8, borderRadius: 6, fontSize: 13, cursor: "pointer", fontWeight: 700 }}>{editItem ? "Save Changes" : "Add Assignment"}</button>
               </div>
               {editItem?.fromJira && editItem?.jiraKey && (
                 <a href={`${JIRA_BASE}/${editItem.jiraKey}`} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 4, color: "#3B82F6", fontSize: 12, textDecoration: "none", padding: 7, borderRadius: 6, border: "1px solid #1D3557", background: "#0D1117" }}>
