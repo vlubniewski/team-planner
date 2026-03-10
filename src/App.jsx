@@ -363,10 +363,11 @@ export default function App() {
 
                       return (
                         <tr key={`task-${a.id}`}>
-                          <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 10px 0 28px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14" }}>
+                          <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 10px 0 28px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14", cursor: "pointer" }}
+                            onClick={e => openEdit(e, a)}>
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                               {a.fromJira && <span style={{ fontSize: 8, fontWeight: 700, background: "#1D3557", color: "#3B82F6", padding: "1px 3px", borderRadius: 3, flexShrink: 0 }}>J</span>}
-                              <span style={{ fontSize: 10, color: "#8B949E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 138 }}>{a.title}</span>
+                              <span style={{ fontSize: 10, color: "#8B949E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 138, textDecoration: "underline dotted #484F58" }}>{a.title}</span>
                             </div>
                           </td>
                           {cells}
