@@ -26,6 +26,8 @@ export default async function handler(req, res) {
       jira_key: a.jiraKey ?? null,
       status: a.status ?? null,
       due_date_key: a.dueDateKey ?? null,
+      resolved_key: a.resolvedKey ?? null,
+      is_done: a.isDone ?? false,
       updated_at: new Date().toISOString(),
     }));
 
