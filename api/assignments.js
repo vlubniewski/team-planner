@@ -16,13 +16,12 @@ export default async function handler(req, res) {
     const { assignments } = req.body;
     if (!assignments) return res.status(400).json({ error: 'No assignments provided' });
 
-    // Upsert all current assignments
     const rows = assignments.map(a => ({
       id: a.id,
       title: a.title,
       member_id: a.memberId,
       start_key: a.startKey ?? null,
-      duration_days: a.durationDays ?? null,
+      end_key: a.endKey ?? null,
       from_jira: a.fromJira ?? false,
       jira_key: a.jiraKey ?? null,
       status: a.status ?? null,
@@ -35,7 +34,6 @@ export default async function handler(req, res) {
       .upsert(rows, { onConflict: 'id' });
     if (upsertErr) return res.status(500).json({ error: upsertErr.message });
 
-    // Delete any rows not in the current list
     if (rows.length > 0) {
       const ids = rows.map(r => r.id);
       await supabase.from('assignments').delete().not('id', 'in', `(${ids.map(i => `"${i}"`).join(',')})`);

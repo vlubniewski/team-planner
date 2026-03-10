@@ -12,8 +12,9 @@ const SIDEBAR_W = 200;
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 const TODAY_KEY = TODAY.toISOString().slice(0,10);
 
-function dateKey(d) { return d.toISOString().slice(0,10); }
-function isWeekend(d) { const day = d.getDay(); return day === 0 || day === 6; }
+function dateKey(d) { return new Date(d).toISOString().slice(0,10); }
+function isWeekend(d) { const day = new Date(d).getDay(); return day === 0 || day === 6; }
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 
 function buildDays(monthOffset, numMonths) {
   const days = [];
@@ -30,8 +31,7 @@ function buildDays(monthOffset, numMonths) {
 }
 
 function getMonthGroups(days) {
-  const groups = [];
-  let cur = null;
+  const groups = []; let cur = null;
   days.forEach((d, i) => {
     const key = `${d.getFullYear()}-${d.getMonth()}`;
     const label = d.toLocaleString("default", { month: "long", year: "numeric" });
@@ -42,33 +42,36 @@ function getMonthGroups(days) {
 }
 
 function getWeekGroups(days) {
-  const groups = [];
-  let cur = null;
+  const groups = []; let cur = null;
   days.forEach((d, i) => {
     const jan1 = new Date(d.getFullYear(), 0, 1);
     const wk = Math.ceil(((d - jan1) / 86400000 + jan1.getDay() + 1) / 7);
     const key = `${d.getFullYear()}-${wk}`;
-    if (!cur || cur.key !== key) {
-      cur = { key, label: d.toLocaleDateString("default", { month: "short", day: "numeric" }), start: i, count: 1 };
-      groups.push(cur);
-    } else cur.count++;
+    if (!cur || cur.key !== key) { cur = { key, label: d.toLocaleDateString("default", { month: "short", day: "numeric" }), start: i, count: 1 }; groups.push(cur); }
+    else cur.count++;
   });
   return groups;
 }
 
+// Given a start and end date key, compute which visible columns to span
+function getBarSpan(startKey, endKey, dayKeys) {
+  const sIdx = dayKeys.findIndex(k => k >= startKey);
+  const eIdx = (() => {
+    let last = -1;
+    for (let i = dayKeys.length - 1; i >= 0; i--) { if (dayKeys[i] <= endKey) { last = i; break; } }
+    return last;
+  })();
+  if (sIdx === -1 || eIdx === -1 || eIdx < sIdx) return null;
+  return { sIdx, span: eIdx - sIdx + 1 };
+}
+
 function SaveStatus({ status }) {
-  const styles = {
-    saving: { color: "#8B949E" },
-    saved:  { color: "#3FB950" },
-    error:  { color: "#F85149" },
-  };
-  const labels = { saving: "Saving…", saved: "All changes saved", error: "Save failed" };
+  const styles = { saving: { color: "#8B949E" }, saved: { color: "#3FB950" }, error: { color: "#F85149" } };
+  const labels = { saving: "Saving…", saved: "✓ All changes saved", error: "✕ Save failed" };
   if (!status) return null;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, ...styles[status] }}>
       {status === "saving" && <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span>}
-      {status === "saved" && <span>✓</span>}
-      {status === "error" && <span>✕</span>}
       {labels[status]}
     </div>
   );
@@ -80,14 +83,13 @@ export default function App() {
   const [expanded, setExpanded] = useState({ 1: true, 2: true, 3: true, 4: true });
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  const [form, setForm] = useState({ title: "", memberId: 1, startKey: TODAY_KEY, durationDays: 5, fromJira: false, dueDateKey: null });
+  const [form, setForm] = useState({ title: "", memberId: 1, startKey: TODAY_KEY, endKey: dateKey(addDays(TODAY, 4)), fromJira: false, dueDateKey: null });
   const [tooltip, setTooltip] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [saveStatus, setSaveStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [dragging, setDragging] = useState(null);
-  const [dragOffset, setDragOffset] = useState(0);
   const gridRef = useRef(null);
   const nextId = useRef(300);
   const [colW, setColW] = useState(0);
@@ -97,18 +99,20 @@ export default function App() {
   const NUM_DAYS = DAYS.length;
   const monthGroups = getMonthGroups(DAYS);
   const weekGroups = getWeekGroups(DAYS);
-  const dayKeys = DAYS.map(dateKey);
+  const dayKeys = DAYS.map(d => dateKey(d));
 
   useEffect(() => {
     const measure = () => {
-      if (gridRef.current) setColW((gridRef.current.offsetWidth - SIDEBAR_W) / NUM_DAYS);
+      if (gridRef.current && gridRef.current.offsetWidth > 0)
+        setColW((gridRef.current.offsetWidth - SIDEBAR_W) / NUM_DAYS);
     };
     measure();
+    const t = setTimeout(measure, 100);
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [monthOffset]);
+    return () => { clearTimeout(t); window.removeEventListener("resize", measure); };
+  }, [monthOffset, loading]);
 
-  // Load from API on mount
+  // Load on mount
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -117,24 +121,18 @@ export default function App() {
         const data = await res.json();
         if (Array.isArray(data)) {
           setAssignments(data.map(r => ({
-            id: r.id,
-            title: r.title,
-            memberId: r.member_id,
-            startKey: r.start_key,
-            durationDays: r.duration_days,
-            fromJira: r.from_jira,
-            jiraKey: r.jira_key,
-            status: r.status,
-            dueDateKey: r.due_date_key,
+            id: r.id, title: r.title, memberId: r.member_id,
+            startKey: r.start_key, endKey: r.end_key,
+            fromJira: r.from_jira, jiraKey: r.jira_key,
+            status: r.status, dueDateKey: r.due_date_key,
           })));
         }
-      } catch (e) { console.error('Load failed', e); }
+      } catch(e) { console.error("Load failed", e); }
       setLoading(false);
     };
     load();
   }, []);
 
-  // Auto-save via API
   const persistAssignments = useCallback(async (list) => {
     setSaveStatus("saving");
     try {
@@ -146,9 +144,7 @@ export default function App() {
       if (!res.ok) throw new Error('Save failed');
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus(null), 2000);
-    } catch {
-      setSaveStatus("error");
-    }
+    } catch { setSaveStatus("error"); }
   }, []);
 
   const updateAssignments = useCallback((updater) => {
@@ -162,37 +158,23 @@ export default function App() {
 
   const openAdd = (memberId, dk) => {
     setEditItem(null);
-    setForm({ title: "", memberId, startKey: dk, durationDays: 5, fromJira: false, dueDateKey: null });
+    setForm({ title: "", memberId, startKey: dk, endKey: dateKey(addDays(new Date(dk), 4)), fromJira: false, dueDateKey: null });
     setShowModal(true);
   };
   const openEdit = (e, a) => {
     e.stopPropagation();
     setEditItem(a);
-    setForm({ title: a.title, memberId: a.memberId, startKey: a.startKey, durationDays: a.durationDays, fromJira: a.fromJira, dueDateKey: a.dueDateKey ?? null });
+    setForm({ title: a.title, memberId: a.memberId, startKey: a.startKey, endKey: a.endKey, fromJira: a.fromJira, dueDateKey: a.dueDateKey ?? null });
     setShowModal(true);
   };
   const save = () => {
     if (!form.title.trim()) return;
+    if (form.endKey < form.startKey) return;
     if (editItem) updateAssignments(p => p.map(a => a.id === editItem.id ? { ...a, ...form } : a));
     else updateAssignments(p => [...p, { id: `manual-${nextId.current++}-${Date.now()}`, ...form }]);
     setShowModal(false);
   };
   const del = id => { updateAssignments(p => p.filter(a => a.id !== id)); setShowModal(false); };
-
-  const handleDragStart = (e, a, startIdx) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setDragging({ ...a, _startIdx: startIdx });
-    setDragOffset(Math.floor((e.clientX - rect.left) / colW));
-    e.dataTransfer.effectAllowed = "move";
-  };
-  const handleDrop = (e, memberId, dk) => {
-    e.preventDefault();
-    if (!dragging || dragging.fromJira) return;
-    const dropIdx = dayKeys.indexOf(dk);
-    const newIdx = Math.max(0, Math.min(NUM_DAYS - dragging.durationDays, dropIdx - dragOffset));
-    updateAssignments(p => p.map(a => a.id === dragging.id ? { ...a, startKey: dayKeys[newIdx], memberId } : a));
-    setDragging(null);
-  };
 
   const syncFromJira = async () => {
     setSyncing(true); setSyncStatus(null);
@@ -207,11 +189,11 @@ export default function App() {
         if (!member) return null;
         let dueDateKey = null;
         if (duedate) { const dd = new Date(duedate); dd.setHours(0,0,0,0); dueDateKey = dateKey(dd); }
-        return { id: `jira-${issue.id}`, title: summary, memberId: member.id, startKey: null, durationDays: null, fromJira: true, jiraKey: issue.key, status: issue.fields.status?.name, dueDateKey };
+        return { id: `jira-${issue.id}`, title: summary, memberId: member.id, startKey: null, endKey: null, fromJira: true, jiraKey: issue.key, status: issue.fields.status?.name, dueDateKey };
       }).filter(Boolean);
       updateAssignments(p => [...p.filter(a => !a.fromJira), ...ja]);
       setSyncStatus({ type: "success", message: `Synced ${ja.length} stories from WOPS` });
-    } catch (err) { setSyncStatus({ type: "error", message: `Sync failed: ${err.message}` }); }
+    } catch(err) { setSyncStatus({ type: "error", message: `Sync failed: ${err.message}` }); }
     setSyncing(false);
   };
 
@@ -230,13 +212,11 @@ export default function App() {
           <span style={{ fontSize: 13, fontWeight: 700, color: "#F0F6FC", letterSpacing: "-0.3px" }}>TeamPlanner</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 8, padding: "3px 6px" }}>
-          <button onClick={() => setMonthOffset(o => o - 1)} style={{ background: "none", border: "none", color: "#8B949E", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "2px 4px", borderRadius: 4 }}>‹</button>
+          <button onClick={() => setMonthOffset(o => o - 1)} style={{ background: "none", border: "none", color: "#8B949E", cursor: "pointer", fontSize: 14, padding: "2px 4px" }}>‹</button>
           <span style={{ fontSize: 12, fontWeight: 600, color: "#F0F6FC", minWidth: 180, textAlign: "center" }}>{monthLabel}</span>
-          <button onClick={() => setMonthOffset(o => o + 1)} style={{ background: "none", border: "none", color: "#8B949E", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "2px 4px", borderRadius: 4 }}>›</button>
+          <button onClick={() => setMonthOffset(o => o + 1)} style={{ background: "none", border: "none", color: "#8B949E", cursor: "pointer", fontSize: 14, padding: "2px 4px" }}>›</button>
         </div>
-        {monthOffset !== 0 && (
-          <button onClick={() => setMonthOffset(0)} style={{ background: "none", border: "1px solid #30363D", color: "#8B949E", fontSize: 11, padding: "3px 8px", borderRadius: 6, cursor: "pointer" }}>Today</button>
-        )}
+        {monthOffset !== 0 && <button onClick={() => setMonthOffset(0)} style={{ background: "none", border: "1px solid #30363D", color: "#8B949E", fontSize: 11, padding: "3px 8px", borderRadius: 6, cursor: "pointer" }}>Today</button>}
         <div style={{ flex: 1 }} />
         <SaveStatus status={saveStatus} />
         <div style={{ display: "flex", gap: 20, alignItems: "center", marginLeft: 16, marginRight: 16 }}>
@@ -251,7 +231,7 @@ export default function App() {
           <span style={{ fontSize: 13, display: "inline-block", animation: syncing ? "spin 1s linear infinite" : "none" }}>⟳</span>
           {syncing ? "Syncing…" : "Sync WOPS"}
         </button>
-        <button onClick={() => openAdd(1, dayKeys[0] || TODAY_KEY)} style={{ background: "#238636", border: "1px solid #2EA043", color: "white", padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+        <button onClick={() => openAdd(1, TODAY_KEY)} style={{ background: "#238636", border: "1px solid #2EA043", color: "white", padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Add
         </button>
       </div>
@@ -278,25 +258,17 @@ export default function App() {
               <thead>
                 <tr style={{ background: "#161B22" }}>
                   <th style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "5px 14px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#484F58", letterSpacing: "0.06em", position: "sticky", top: 0, zIndex: 20, background: "#161B22" }}>TEAM</th>
-                  {monthGroups.map(g => (
-                    <th key={g.key} colSpan={g.count} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "5px 10px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#8B949E", letterSpacing: "0.05em", position: "sticky", top: 0, zIndex: 19, background: "#161B22" }}>{g.label.toUpperCase()}</th>
-                  ))}
+                  {monthGroups.map(g => <th key={g.key} colSpan={g.count} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "5px 10px", textAlign: "left", fontSize: 11, fontWeight: 700, color: "#8B949E", letterSpacing: "0.05em", position: "sticky", top: 0, zIndex: 19, background: "#161B22" }}>{g.label.toUpperCase()}</th>)}
                 </tr>
                 <tr>
                   <th style={{ borderBottom: "1px solid #30363D", borderRight: "1px solid #21262D", position: "sticky", top: 27, zIndex: 20, background: "#161B22" }} />
-                  {weekGroups.map(g => (
-                    <th key={g.key} colSpan={g.count} style={{ borderBottom: "1px solid #30363D", borderRight: "1px solid #21262D", padding: "3px 5px", textAlign: "left", fontSize: 9, fontWeight: 600, color: "#484F58", background: "#161B22", position: "sticky", top: 27, zIndex: 19 }}>{g.label}</th>
-                  ))}
+                  {weekGroups.map(g => <th key={g.key} colSpan={g.count} style={{ borderBottom: "1px solid #30363D", borderRight: "1px solid #21262D", padding: "3px 5px", textAlign: "left", fontSize: 9, fontWeight: 600, color: "#484F58", background: "#161B22", position: "sticky", top: 27, zIndex: 19 }}>{g.label}</th>)}
                 </tr>
                 <tr>
                   <th style={{ borderBottom: "2px solid #30363D", borderRight: "1px solid #21262D", position: "sticky", top: 50, zIndex: 20, background: "#0D0F14" }} />
                   {DAYS.map((d, i) => {
                     const isToday = dateKey(d) === TODAY_KEY;
-                    return (
-                      <th key={i} style={{ borderBottom: "2px solid #30363D", borderRight: "1px solid #1A1F26", padding: "2px 0", textAlign: "center", fontSize: 9, color: isToday ? "#6366F1" : "#484F58", fontWeight: isToday ? 800 : 400, background: isToday ? "#1A1F2E" : "#0D0F14", position: "sticky", top: 50, zIndex: 19 }}>
-                        {isToday ? "•" : d.getDate()}
-                      </th>
-                    );
+                    return <th key={i} style={{ borderBottom: "2px solid #30363D", borderRight: "1px solid #1A1F26", padding: "2px 0", textAlign: "center", fontSize: 9, color: isToday ? "#6366F1" : "#484F58", fontWeight: isToday ? 800 : 400, background: isToday ? "#1A1F2E" : "#0D0F14", position: "sticky", top: 50, zIndex: 19 }}>{isToday ? "•" : d.getDate()}</th>;
                   })}
                 </tr>
               </thead>
@@ -304,12 +276,11 @@ export default function App() {
                 {TEAM_MEMBERS.map(member => {
                   const mTasks = assignments.filter(a => a.memberId === member.id);
                   const isExpanded = expanded[member.id];
-                  let coveredDays = 0;
-                  mTasks.filter(a => a.startKey && a.durationDays).forEach(a => {
-                    const sIdx = dayKeys.indexOf(a.startKey);
-                    if (sIdx >= 0) coveredDays += Math.min(a.durationDays, NUM_DAYS - sIdx);
-                  });
-                  const pct = Math.min(100, Math.round((coveredDays / NUM_DAYS) * 100));
+                  const visibleDays = mTasks.filter(a => a.startKey && a.endKey).reduce((s, a) => {
+                    const bar = getBarSpan(a.startKey, a.endKey, dayKeys);
+                    return s + (bar ? bar.span : 0);
+                  }, 0);
+                  const pct = Math.min(100, Math.round((visibleDays / NUM_DAYS) * 100));
                   const barColor = pct > 80 ? "#F85149" : pct > 60 ? "#F59E0B" : member.color;
 
                   return [
@@ -330,10 +301,7 @@ export default function App() {
                           </div>
                         </div>
                       </td>
-                      {DAYS.map((d, i) => (
-                        <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: dateKey(d) === TODAY_KEY ? "#1A1F2E33" : "transparent" }}
-                          onDragOver={e => e.preventDefault()} onDrop={e => handleDrop(e, member.id, dateKey(d))} />
-                      ))}
+                      {DAYS.map((d, i) => <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: dateKey(d) === TODAY_KEY ? "#1A1F2E33" : "transparent" }} onDragOver={e => e.preventDefault()} />)}
                     </tr>,
 
                     isExpanded && mTasks.length === 0 && (
@@ -341,16 +309,58 @@ export default function App() {
                         <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 12px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14" }}>
                           <span style={{ fontSize: 10, color: "#484F58", fontStyle: "italic" }}>No tasks</span>
                         </td>
-                        {DAYS.map((d, i) => (
-                          <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: dateKey(d) === TODAY_KEY ? "#1A1F2E11" : "transparent", cursor: "crosshair" }}
-                            onClick={() => openAdd(member.id, dateKey(d))} onDragOver={e => e.preventDefault()} onDrop={e => handleDrop(e, member.id, dateKey(d))} />
-                        ))}
+                        {DAYS.map((d, i) => <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: dateKey(d) === TODAY_KEY ? "#1A1F2E11" : "transparent", cursor: "crosshair" }} onClick={() => openAdd(member.id, dateKey(d))} />)}
                       </tr>
                     ),
 
                     isExpanded && mTasks.map(a => {
-                      const startIdx = dayKeys.indexOf(a.startKey);
-                      const dueIdx = a.dueDateKey ? dayKeys.indexOf(a.dueDateKey) : -1;
+                      const bar = a.startKey && a.endKey ? getBarSpan(a.startKey, a.endKey, dayKeys) : null;
+                      const dueIdx = a.dueDateKey ? dayKeys.findIndex(k => k === a.dueDateKey) : -1;
+
+                      // Build cell array
+                      const cells = [];
+                      let i = 0;
+                      while (i < NUM_DAYS) {
+                        const dk = dayKeys[i];
+                        const isToday = dk === TODAY_KEY;
+                        const isDueDay = a.fromJira && dueIdx === i;
+                        const isBarStart = bar && bar.sIdx === i;
+
+                        if (isBarStart) {
+                          cells.push(
+                            <td key={i} colSpan={bar.span}
+                              style={{ borderBottom: "1px solid #21262D", borderRight: "none", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }}
+                              onClick={e => openEdit(e, a)}>
+                              <div
+                                onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })}
+                                onMouseLeave={() => setTooltip(null)}
+                                style={{ height: 22, borderRadius: 4, background: `linear-gradient(135deg,${member.color}EE,${member.color}99)`, borderLeft: `3px solid ${member.color}`, display: "flex", alignItems: "center", padding: "0 6px", boxShadow: `0 1px 4px ${member.color}44`, overflow: "hidden", cursor: "pointer" }}>
+                                <span style={{ fontSize: 10, fontWeight: 600, color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 2px rgba(0,0,0,.5)" }}>{a.title}</span>
+                              </div>
+                            </td>
+                          );
+                          i += bar.span;
+                        } else if (isDueDay) {
+                          cells.push(
+                            <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
+                              <div onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
+                                style={{ height: 22, borderRadius: 4, background: `${member.color}22`, border: `1px dashed ${member.color}88`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <span style={{ fontSize: 8, fontWeight: 800, color: member.color }}>DUE</span>
+                              </div>
+                            </td>
+                          );
+                          i++;
+                        } else {
+                          // Skip cells that are inside a bar span (already covered by colSpan)
+                          if (bar && i > bar.sIdx && i < bar.sIdx + bar.span) { i++; continue; }
+                          cells.push(
+                            <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", cursor: "crosshair" }}
+                              onClick={() => openAdd(member.id, dk)} />
+                          );
+                          i++;
+                        }
+                      }
+
                       return (
                         <tr key={`task-${a.id}`}>
                           <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 10px 0 28px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14" }}>
@@ -359,34 +369,7 @@ export default function App() {
                               <span style={{ fontSize: 10, color: "#8B949E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 138 }}>{a.title}</span>
                             </div>
                           </td>
-                          {DAYS.map((d, i) => {
-                            const dk = dateKey(d);
-                            const isToday = dk === TODAY_KEY;
-                            const isDueDay = a.fromJira && dueIdx === i;
-                            const isStart = !a.fromJira && startIdx === i;
-                            const span = isStart ? Math.min(a.durationDays, NUM_DAYS - i) : 1;
-                            return (
-                              <td key={i} colSpan={isStart ? span : 1}
-                                style={{ borderBottom: "1px solid #21262D", borderRight: isStart && span > 1 ? "none" : "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", padding: isStart || isDueDay ? "3px 2px" : 0, cursor: isStart || isDueDay ? "pointer" : "crosshair" }}
-                                onClick={isStart || isDueDay ? e => openEdit(e, a) : () => openAdd(member.id, dk)}
-                                onDragOver={e => e.preventDefault()} onDrop={e => handleDrop(e, member.id, dk)}
-                              >
-                                {isStart && (
-                                  <div draggable onDragStart={e => handleDragStart(e, a, i)} onDragEnd={() => setDragging(null)}
-                                    onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
-                                    style={{ height: 22, borderRadius: 4, background: `linear-gradient(135deg,${member.color}EE,${member.color}99)`, borderLeft: `3px solid ${member.color}`, display: "flex", alignItems: "center", padding: "0 6px", boxShadow: `0 1px 4px ${member.color}44`, opacity: dragging?.id === a.id ? 0.4 : 1, cursor: "grab", overflow: "hidden" }}>
-                                    <span style={{ fontSize: 10, fontWeight: 600, color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 2px rgba(0,0,0,.5)" }}>{a.title}</span>
-                                  </div>
-                                )}
-                                {isDueDay && (
-                                  <div onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
-                                    style={{ height: 22, borderRadius: 4, background: `${member.color}22`, border: `1px dashed ${member.color}88`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                                    <span style={{ fontSize: 8, fontWeight: 800, color: member.color }}>DUE</span>
-                                  </div>
-                                )}
-                              </td>
-                            );
-                          })}
+                          {cells}
                         </tr>
                       );
                     })
@@ -402,7 +385,7 @@ export default function App() {
         <div style={{ position: "fixed", left: tooltip.x + 14, top: tooltip.y - 80, background: "#1C2128", border: "1px solid #30363D", borderRadius: 8, padding: "10px 14px", fontSize: 12, pointerEvents: "none", zIndex: 1000, boxShadow: "0 8px 32px rgba(0,0,0,.6)", minWidth: 180 }}>
           <div style={{ fontWeight: 700, color: "#F0F6FC", marginBottom: 4 }}>{tooltip.a.title}</div>
           <div style={{ color: "#8B949E", fontSize: 11 }}>{TEAM_MEMBERS.find(m => m.id === tooltip.a.memberId)?.name}</div>
-          {tooltip.a.durationDays && tooltip.a.startKey && <div style={{ color: "#484F58", fontSize: 10, marginTop: 3 }}>{tooltip.a.durationDays} day{tooltip.a.durationDays > 1 ? "s" : ""} · starts {new Date(tooltip.a.startKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
+          {tooltip.a.startKey && <div style={{ color: "#484F58", fontSize: 10, marginTop: 3 }}>{new Date(tooltip.a.startKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })} → {new Date(tooltip.a.endKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
           {tooltip.a.dueDateKey && <div style={{ color: "#F59E0B", fontSize: 10, marginTop: 3 }}>Due {new Date(tooltip.a.dueDateKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
           {tooltip.a.status && <div style={{ color: "#8B949E", fontSize: 10, marginTop: 2 }}>Status: {tooltip.a.status}</div>}
           {tooltip.a.fromJira && tooltip.a.jiraKey && <div style={{ color: "#3B82F6", fontSize: 10, marginTop: 3 }}>↗ {tooltip.a.jiraKey} · click to open</div>}
@@ -431,21 +414,20 @@ export default function App() {
                 <div style={{ display: "flex", gap: 10 }}>
                   <div style={{ flex: 1 }}>
                     <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Start Date</label>
-                    <select value={form.startKey} onChange={e => setForm(f => ({ ...f, startKey: e.target.value }))} style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer" }}>
-                      {DAYS.map(d => <option key={dateKey(d)} value={dateKey(d)}>{d.toLocaleDateString("default", { weekday: "short", month: "short", day: "numeric" })}</option>)}
-                    </select>
+                    <input type="date" value={form.startKey} onChange={e => setForm(f => ({ ...f, startKey: e.target.value }))}
+                      style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer", colorScheme: "dark" }} />
                   </div>
                   <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Duration</label>
-                    <select value={form.durationDays} onChange={e => setForm(f => ({ ...f, durationDays: Number(e.target.value) }))} style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer" }}>
-                      {[1,2,3,4,5,6,7,8,9,10,15,20].map(d => <option key={d} value={d}>{d} day{d > 1 ? "s" : ""}</option>)}
-                    </select>
+                    <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>End Date</label>
+                    <input type="date" value={form.endKey} min={form.startKey} onChange={e => setForm(f => ({ ...f, endKey: e.target.value }))}
+                      style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer", colorScheme: "dark" }} />
                   </div>
                 </div>
               )}
+              {form.endKey < form.startKey && <div style={{ fontSize: 11, color: "#F85149" }}>End date must be after start date.</div>}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 {editItem && <button onClick={() => del(editItem.id)} style={{ flex: 1, background: "transparent", border: "1px solid #F8514933", color: "#F85149", padding: 8, borderRadius: 6, fontSize: 12, cursor: "pointer", fontWeight: 600 }}>Delete</button>}
-                <button onClick={save} style={{ flex: 2, background: "#238636", border: "1px solid #2EA043", color: "white", padding: 8, borderRadius: 6, fontSize: 13, cursor: "pointer", fontWeight: 700 }}>{editItem ? "Save Changes" : "Add Assignment"}</button>
+                <button onClick={save} disabled={form.endKey < form.startKey} style={{ flex: 2, background: "#238636", border: "1px solid #2EA043", color: "white", padding: 8, borderRadius: 6, fontSize: 13, cursor: "pointer", fontWeight: 700, opacity: form.endKey < form.startKey ? 0.5 : 1 }}>{editItem ? "Save Changes" : "Add Assignment"}</button>
               </div>
               {editItem?.fromJira && editItem?.jiraKey && (
                 <a href={`${JIRA_BASE}/${editItem.jiraKey}`} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 4, color: "#3B82F6", fontSize: 12, textDecoration: "none", padding: 7, borderRadius: 6, border: "1px solid #1D3557", background: "#0D1117" }}>
