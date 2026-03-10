@@ -133,7 +133,8 @@ export default function App() {
       const data = await res.json();
       const ja = (data.issues || []).map(issue => {
         const { summary, assignee, duedate } = issue.fields;
-        const member = TEAM_MEMBERS.find(m => assignee && m.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase())) || TEAM_MEMBERS[0];
+        const member = TEAM_MEMBERS.find(m => assignee && m.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase()));
+        if (!member) return null;
         let dueDateKey = null;
         if (duedate) {
           const dd = new Date(duedate); dd.setHours(0,0,0,0);
@@ -141,8 +142,9 @@ export default function App() {
         }
         return { id: `jira-${issue.id}`, title: summary, memberId: member.id, startKey: null, durationDays: null, fromJira: true, jiraKey: issue.key, status: issue.fields.status?.name, dueDateKey };
       });
-      setAssignments(p => [...p.filter(a => !a.fromJira), ...ja]);
-      setSyncStatus({ type: "success", message: `Synced ${ja.length} stories from WOPS` });
+      const filtered = ja.filter(Boolean);
+      setAssignments(p => [...p.filter(a => !a.fromJira), ...filtered]);
+      setSyncStatus({ type: "success", message: `Synced ${filtered.length} stories from WOPS` });
     } catch (err) { setSyncStatus({ type: "error", message: `Sync failed: ${err.message}` }); }
     setSyncing(false);
   };
