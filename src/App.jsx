@@ -29,6 +29,7 @@ function getMonthGroups() {
   return groups;
 }
 
+const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
 const SIDEBAR_W = 200;
 const ROW_H = 44;
 const HEADER_H = 56;
@@ -318,7 +319,11 @@ export default function App() {
           <div style={{ color:"#8B949E", fontSize:11 }}>{TEAM_MEMBERS.find(m=>m.id===tooltip.a.memberId)?.name}</div>
           {tooltip.a.duration && <div style={{ color:"#484F58", fontSize:10, marginTop:3 }}>{tooltip.a.duration} week{tooltip.a.duration>1?"s":""} · starts {getWeekLabel(tooltip.a.startWeek)}</div>}
           {tooltip.a.dueDateWeek!=null && <div style={{ color:"#F59E0B", fontSize:10, marginTop:3 }}>Due {getWeekLabel(tooltip.a.dueDateWeek)}</div>}
-          {tooltip.a.fromJira && <div style={{ color:"#3B82F6", fontSize:10, marginTop:3 }}>↗ Jira · {tooltip.a.jiraKey}</div>}
+          {tooltip.a.fromJira && tooltip.a.jiraKey && (
+            <a href={`${JIRA_BASE}/${tooltip.a.jiraKey}`} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{ display:"block", color:"#3B82F6", fontSize:10, marginTop:4, textDecoration:"none" }}>
+              ↗ Open in Jira · {tooltip.a.jiraKey}
+            </a>
+          )}
           {tooltip.a.status && <div style={{ color:"#8B949E", fontSize:10 }}>Status: {tooltip.a.status}</div>}
         </div>
       )}
@@ -360,8 +365,13 @@ export default function App() {
               )}
               <div style={{ display:"flex", gap:8, marginTop:4 }}>
                 {editItem && <button onClick={()=>del(editItem.id)} style={{ flex:1,background:"transparent",border:"1px solid #F8514933",color:"#F85149",padding:8,borderRadius:6,fontSize:12,cursor:"pointer",fontWeight:600 }}>Delete</button>}
-                <button onClick={save} style={{ flex:2,background:"#238636",border:"1px solid #2EA043",color:"white",padding:8,borderRadius:6,fontSize:13,cursor:"pointer",fontWeight:700 }}>{editItem?"Save Changes":"Add Assignment"}</button>
+                <button onClick={save} style={{ flex:2,background:"#238636",border:"1px solid #2EA043",color:"white",padding:8,borderRadius:6,fontSize:13,cursor:"pointer",fontWeight:700 }}>              {editItem?"Save Changes":"Add Assignment"}</button>
               </div>
+              {editItem?.fromJira && editItem?.jiraKey && (
+                <a href={`${JIRA_BASE}/${editItem.jiraKey}`} target="_blank" rel="noreferrer" style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, marginTop:10, color:"#3B82F6", fontSize:12, textDecoration:"none", padding:"7px", borderRadius:6, border:"1px solid #1D3557", background:"#0D1117" }}>
+                  <span style={{ fontSize:13 }}>↗</span> View {editItem.jiraKey} in Jira
+                </a>
+              )}
             </div>
           </div>
         </div>
