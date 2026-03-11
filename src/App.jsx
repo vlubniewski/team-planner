@@ -243,6 +243,7 @@ export default function App() {
   const [showMilestoneModal,setShowMilestoneModal]= useState(false);
   const [editMilestone,     setEditMilestone]     = useState(null);
   const [milestoneForm,     setMilestoneForm]     = useState({title:"",dateKey:TODAY_KEY,color:"#D97706"});
+  const [dayMsModal,        setDayMsModal]        = useState(null); // {dateKey, milestones[]}
 
   const gridRef   = useRef(null);
   const nextId    = useRef(300);
@@ -669,27 +670,27 @@ export default function App() {
                       return(
                         <td key={i} style={{borderBottom:`2px solid ${C.borderMid}`,borderRight:`1px solid ${C.border}`,background:msOnDay.length>0?`${msOnDay[0].jiraKey}12`:"#FFFBEB",padding:"3px 1px",cursor:msOnDay.length===0?"crosshair":"default",verticalAlign:"middle"}}
                           onClick={()=>msOnDay.length===0&&openAddMilestone(dk)}>
-                          {msOnDay.length>0&&(()=>{
+                          {msOnDay.length===1&&(()=>{
                             const ms=msOnDay[0];
-                            const extra=msOnDay.length-1;
                             return(
-                              <div style={{display:"flex",flexDirection:"column",gap:2,padding:"2px 1px"}}>
-                                <div onClick={e=>openEditMilestone(e,ms)}
-                                  onMouseEnter={e=>setTooltip({id:ms.id,x:e.clientX,y:e.clientY,a:{title:ms.title,startKey:ms.startKey,status:"Milestone",fromJira:false}})}
-                                  onMouseLeave={()=>setTooltip(null)}
-                                  style={{height:30,borderRadius:5,background:`linear-gradient(135deg,${ms.jiraKey}22,${ms.jiraKey}10)`,border:`1.5px solid ${ms.jiraKey}`,display:"flex",alignItems:"center",padding:"0 5px",gap:3,cursor:"pointer",boxShadow:`0 1px 4px ${ms.jiraKey}33`}}>
-                                  <span style={{fontSize:9}}>🚩</span>
-                                  <span style={{fontSize:8,fontWeight:800,color:ms.jiraKey,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{ms.title}</span>
-                                </div>
-                                {extra>0&&(
-                                  <div onClick={e=>{e.stopPropagation();openEditMilestone(e,msOnDay[1]);}}
-                                    style={{fontSize:8,fontWeight:700,color:msOnDay[1].jiraKey,background:`${msOnDay[1].jiraKey}15`,border:`1px solid ${msOnDay[1].jiraKey}40`,borderRadius:4,padding:"1px 5px",textAlign:"center",cursor:"pointer"}}>
-                                    +{extra} more
-                                  </div>
-                                )}
+                              <div onClick={e=>openEditMilestone(e,ms)}
+                                onMouseEnter={e=>setTooltip({id:ms.id,x:e.clientX,y:e.clientY,a:{title:ms.title,startKey:ms.startKey,status:"Milestone",fromJira:false}})}
+                                onMouseLeave={()=>setTooltip(null)}
+                                style={{height:34,borderRadius:5,background:`linear-gradient(135deg,${ms.jiraKey}22,${ms.jiraKey}10)`,border:`1.5px solid ${ms.jiraKey}`,display:"flex",alignItems:"center",padding:"0 6px",gap:4,cursor:"pointer",boxShadow:`0 1px 4px ${ms.jiraKey}33`,margin:"0 1px"}}>
+                                <span style={{fontSize:9}}>🚩</span>
+                                <span style={{fontSize:8,fontWeight:800,color:ms.jiraKey,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ms.title}</span>
                               </div>
                             );
                           })()}
+                          {msOnDay.length>1&&(
+                            <div onClick={e=>{e.stopPropagation();setDayMsModal({dateKey:dk,milestones:msOnDay});}}
+                              style={{margin:"0 1px",height:34,borderRadius:5,background:"#FFFBEB",border:`1.5px dashed ${C.borderMid}`,display:"flex",alignItems:"center",justifyContent:"center",gap:3,cursor:"pointer"}}>
+                              {msOnDay.slice(0,3).map(ms=>(
+                                <span key={ms.id} style={{width:10,height:10,borderRadius:"50%",background:ms.jiraKey,flexShrink:0,border:`1.5px solid white`,boxShadow:`0 0 0 1px ${ms.jiraKey}60`}}/>
+                              ))}
+                              <span style={{fontSize:8,fontWeight:700,color:C.textSecond,marginLeft:2}}>{msOnDay.length}</span>
+                            </div>
+                          )}
                         </td>
                       );
                     })}
@@ -951,11 +952,47 @@ export default function App() {
     </div>
   );
 
+  const DayMilestonesModal = dayMsModal && (
+    <div onClick={()=>setDayMsModal(null)} style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.45)",backdropFilter:"blur(3px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000,padding:20}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:16,boxShadow:"0 24px 60px rgba(0,0,0,0.22)",width:"100%",maxWidth:360,padding:24}}>
+        {/* header */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:700,color:C.textMuted,letterSpacing:"0.07em",marginBottom:3}}>🚩 MILESTONES</div>
+            <div style={{fontSize:16,fontWeight:800,color:BRAND_NAVY}}>{fmtDateLong(dayMsModal.dateKey)}</div>
+          </div>
+          <button onClick={()=>setDayMsModal(null)} style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,color:C.textMuted,width:30,height:30,borderRadius:8,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        {/* milestone list */}
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {dayMsModal.milestones.map(ms=>(
+            <div key={ms.id} onClick={()=>{setDayMsModal(null);openEditMilestone({stopPropagation:()=>{}},ms);}}
+              style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:10,background:`${ms.jiraKey}10`,border:`1.5px solid ${ms.jiraKey}40`,cursor:"pointer",transition:"background 0.12s"}}
+              onMouseEnter={e=>e.currentTarget.style.background=`${ms.jiraKey}20`}
+              onMouseLeave={e=>e.currentTarget.style.background=`${ms.jiraKey}10`}>
+              <span style={{width:12,height:12,borderRadius:"50%",background:ms.jiraKey,flexShrink:0,boxShadow:`0 0 0 3px ${ms.jiraKey}30`}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:ms.jiraKey,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ms.title}</div>
+                <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>{MILESTONE_LEGEND[ms.jiraKey]||"Other"}</div>
+              </div>
+              <span style={{fontSize:11,color:C.textMuted}}>›</span>
+            </div>
+          ))}
+        </div>
+        {/* add another */}
+        <button onClick={()=>{setDayMsModal(null);openAddMilestone(dayMsModal.dateKey);}} style={{width:"100%",marginTop:16,background:C.surfaceAlt,border:`1px dashed ${C.borderMid}`,color:C.textSecond,padding:"9px 0",borderRadius:9,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <span style={{fontSize:14,color:"#D97706"}}>+</span> Add milestone on this date
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <>
       {isMobile ? MobileContent : DesktopContent}
       {AssignmentModal}
       {MilestoneModal}
+      {DayMilestonesModal}
       <style>{`
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         *{box-sizing:border-box}
