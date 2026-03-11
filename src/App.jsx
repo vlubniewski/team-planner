@@ -113,17 +113,54 @@ export default function App() {
     const load = async () => {
       setLoading(true);
       try {
+        // Load saved assignments
         const res = await fetch('/api/assignments');
         const data = await res.json();
+        let saved = [];
         if (Array.isArray(data)) {
-          setAssignments(data.map(r => ({
+          saved = data.map(r => ({
             id: r.id, title: r.title, memberId: r.member_id,
             startKey: r.start_key, endKey: r.end_key,
             fromJira: r.from_jira, jiraKey: r.jira_key,
             status: r.status, dueDateKey: r.due_date_key,
             resolvedKey: r.resolved_key, isDone: r.is_done,
-          })));
+          }));
         }
+
+        // Auto-sync Jira in parallel
+        const [activeRes, doneRes] = await Promise.all([
+          fetch(`/api/jira?jql=${encodeURIComponent('status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC')}`),
+          fetch(`/api/jira?jql=${encodeURIComponent('status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC')}`),
+        ]);
+        const activeData = await activeRes.json();
+        const doneData = await doneRes.json();
+
+        const mapIssue = (issue, isDone) => {
+          const { summary, assignee, duedate, resolutiondate } = issue.fields;
+          const member = TEAM_MEMBERS.find(m => assignee && m.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase()));
+          if (!member) return null;
+          let dueDateKey = null;
+          if (duedate) { const dd = new Date(duedate); dd.setHours(0,0,0,0); dueDateKey = dateKey(dd); }
+          let resolvedKey = null;
+          if (resolutiondate) { const rd = new Date(resolutiondate); rd.setHours(0,0,0,0); resolvedKey = dateKey(rd); }
+          return { id: `jira-${issue.id}`, title: summary, memberId: member.id, startKey: null, endKey: null, fromJira: true, jiraKey: issue.key, status: issue.fields.status?.name, dueDateKey, resolvedKey, isDone };
+        };
+
+        const jiraItems = [
+          ...(activeData.issues || []).map(i => mapIssue(i, false)),
+          ...(doneData.issues || []).map(i => mapIssue(i, true)),
+        ].filter(Boolean);
+
+        // Merge: keep manual items from saved, replace all jira items with fresh ones
+        const merged = [...saved.filter(a => !a.fromJira), ...jiraItems];
+        setAssignments(merged);
+
+        // Persist the merged result
+        await fetch('/api/assignments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assignments: merged }),
+        });
       } catch(e) { console.error("Load failed", e); }
       setLoading(false);
     };
