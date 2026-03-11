@@ -275,11 +275,11 @@ export default function App() {
 
         <div style={{ flex: 1 }} />
         <SaveStatus status={saveStatus} />
-        <div style={{ display: "flex", gap: 16, alignItems: "center", marginLeft: 16, marginRight: 16 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginLeft: 12, marginRight: 12 }}>
           {[{ label: "Active", value: jiraTasks, color: "#3B82F6" }, { label: "Done", value: doneTasks, color: DONE_COLOR }, { label: "Manual", value: manualTasks, color: "#6366F1" }].map(s => (
             <div key={s.label} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.value}</div>
-              <div style={{ fontSize: 10, color: "#484F58", marginTop: 1 }}>{s.label}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: 9, color: "#484F58", marginTop: 1 }}>{s.label}</div>
             </div>
           ))}
         </div>
