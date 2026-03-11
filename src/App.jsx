@@ -15,6 +15,14 @@ const DONE_COLOR       = "#16A34A";
 const BRAND_BLUE       = "#0057B8";
 const BRAND_NAVY       = "#162040";
 const MILESTONE_COLORS = ["#D97706","#4F46E5","#DB2777","#059669","#DC2626","#0057B8"];
+const MILESTONE_LEGEND = {
+  "#D97706": "Marketing",
+  "#4F46E5": "Product",
+  "#DB2777": "Design",
+  "#059669": "Other",
+  "#DC2626": "Critical",
+  "#0057B8": "Engineering",
+};
 
 const C = {
   pageBg:       "#EEF2F7",
@@ -203,6 +211,14 @@ function MobileMilestoneStrip({milestones, monthLabel, onAdd, onEdit}){
       {sorted.length===0&&(
         <div style={{fontSize:10,color:"#92400E",opacity:0.5,fontStyle:"italic"}}>No milestones yet — tap + Add</div>
       )}
+      <div style={{display:"flex",flexWrap:"wrap",gap:"3px 10px",marginTop:7,paddingTop:6,borderTop:"1px solid #FDE68A"}}>
+        {MILESTONE_COLORS.map(c=>(
+          <div key={c} style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:c,display:"inline-block",flexShrink:0}}/>
+            <span style={{fontSize:9,color:"#92400E",opacity:0.8}}>{MILESTONE_LEGEND[c]}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -630,12 +646,20 @@ export default function App() {
                   {/* milestones row */}
                   <tr key="milestones-row">
                     <td style={{borderBottom:`2px solid ${C.borderMid}`,borderRight:`1px solid ${C.border}`,padding:"0 10px 0 14px",height:44,position:"sticky",left:0,zIndex:10,background:"#FFFBEB"}}>
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
                         <div style={{display:"flex",alignItems:"center",gap:6}}>
                           <span style={{fontSize:10}}>🚩</span>
                           <span style={{fontSize:9,fontWeight:700,color:"#92400E",letterSpacing:"0.07em"}}>MILESTONES</span>
                         </div>
                         <button onClick={()=>openAddMilestone(TODAY_KEY)} style={{background:"none",border:"1px solid #D97706",color:"#D97706",fontSize:9,padding:"2px 6px",borderRadius:4,cursor:"pointer",fontWeight:700}}>+</button>
+                      </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:"3px 6px"}}>
+                        {MILESTONE_COLORS.map(c=>(
+                          <div key={c} style={{display:"flex",alignItems:"center",gap:3}}>
+                            <span style={{width:7,height:7,borderRadius:"50%",background:c,display:"inline-block",flexShrink:0}}/>
+                            <span style={{fontSize:8,color:"#92400E",opacity:0.75,whiteSpace:"nowrap"}}>{MILESTONE_LEGEND[c]}</span>
+                          </div>
+                        ))}
                       </div>
                     </td>
                     {DAYS.map((d,i)=>{
@@ -645,15 +669,27 @@ export default function App() {
                       return(
                         <td key={i} style={{borderBottom:`2px solid ${C.borderMid}`,borderRight:`1px solid ${C.border}`,background:msOnDay.length>0?`${msOnDay[0].jiraKey}12`:"#FFFBEB",padding:"3px 1px",cursor:msOnDay.length===0?"crosshair":"default",verticalAlign:"middle"}}
                           onClick={()=>msOnDay.length===0&&openAddMilestone(dk)}>
-                          {msOnDay.map(ms=>(
-                            <div key={ms.id} onClick={e=>openEditMilestone(e,ms)}
-                              onMouseEnter={e=>setTooltip({id:ms.id,x:e.clientX,y:e.clientY,a:{title:ms.title,startKey:ms.startKey,status:"Milestone",fromJira:false}})}
-                              onMouseLeave={()=>setTooltip(null)}
-                              style={{height:34,borderRadius:5,background:`linear-gradient(135deg,${ms.jiraKey}22,${ms.jiraKey}10)`,border:`1.5px solid ${ms.jiraKey}`,display:"flex",alignItems:"center",padding:"0 6px",gap:4,cursor:"pointer",boxShadow:`0 1px 4px ${ms.jiraKey}33`}}>
-                              <span style={{fontSize:9}}>🚩</span>
-                              <span style={{fontSize:8,fontWeight:800,color:ms.jiraKey,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ms.title}</span>
-                            </div>
-                          ))}
+                          {msOnDay.length>0&&(()=>{
+                            const ms=msOnDay[0];
+                            const extra=msOnDay.length-1;
+                            return(
+                              <div style={{display:"flex",flexDirection:"column",gap:2,padding:"2px 1px"}}>
+                                <div onClick={e=>openEditMilestone(e,ms)}
+                                  onMouseEnter={e=>setTooltip({id:ms.id,x:e.clientX,y:e.clientY,a:{title:ms.title,startKey:ms.startKey,status:"Milestone",fromJira:false}})}
+                                  onMouseLeave={()=>setTooltip(null)}
+                                  style={{height:30,borderRadius:5,background:`linear-gradient(135deg,${ms.jiraKey}22,${ms.jiraKey}10)`,border:`1.5px solid ${ms.jiraKey}`,display:"flex",alignItems:"center",padding:"0 5px",gap:3,cursor:"pointer",boxShadow:`0 1px 4px ${ms.jiraKey}33`}}>
+                                  <span style={{fontSize:9}}>🚩</span>
+                                  <span style={{fontSize:8,fontWeight:800,color:ms.jiraKey,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{ms.title}</span>
+                                </div>
+                                {extra>0&&(
+                                  <div onClick={e=>{e.stopPropagation();openEditMilestone(e,msOnDay[1]);}}
+                                    style={{fontSize:8,fontWeight:700,color:msOnDay[1].jiraKey,background:`${msOnDay[1].jiraKey}15`,border:`1px solid ${msOnDay[1].jiraKey}40`,borderRadius:4,padding:"1px 5px",textAlign:"center",cursor:"pointer"}}>
+                                    +{extra} more
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                       );
                     })}
@@ -887,10 +923,13 @@ export default function App() {
             <input type="date" value={milestoneForm.dateKey} onChange={e=>setMilestoneForm(f=>({...f,dateKey:e.target.value}))} style={{...inputStyle,borderColor:milestoneForm.color+"50",cursor:"pointer",colorScheme:"light"}}/>
           </div>
           <div>
-            <label style={labelStyle}>Color</label>
-            <div style={{display:"flex",gap:10,marginTop:8}}>
+            <label style={labelStyle}>Color / Category</label>
+            <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
               {MILESTONE_COLORS.map(c=>(
-                <button key={c} onClick={()=>setMilestoneForm(f=>({...f,color:c}))} style={{width:32,height:32,borderRadius:8,background:c,border:milestoneForm.color===c?`3px solid ${BRAND_NAVY}`:`2px solid ${c}40`,cursor:"pointer",boxShadow:milestoneForm.color===c?`0 0 0 2px white,0 0 0 4px ${c}`:"none",transition:"all 0.15s"}}/>
+                <div key={c} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer"}} onClick={()=>setMilestoneForm(f=>({...f,color:c}))}>
+                  <div style={{width:32,height:32,borderRadius:8,background:c,border:milestoneForm.color===c?`3px solid ${BRAND_NAVY}`:`2px solid ${c}40`,boxShadow:milestoneForm.color===c?`0 0 0 2px white,0 0 0 4px ${c}`:"none",transition:"all 0.15s"}}/>
+                  <span style={{fontSize:8,color:milestoneForm.color===c?c:C.textMuted,fontWeight:milestoneForm.color===c?700:400,whiteSpace:"nowrap",transition:"all 0.15s"}}>{MILESTONE_LEGEND[c]}</span>
+                </div>
               ))}
             </div>
           </div>
