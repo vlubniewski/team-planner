@@ -17,11 +17,11 @@ const BRAND_NAVY       = "#162040";
 const MILESTONE_COLORS = ["#D97706","#4F46E5","#DB2777","#059669","#DC2626","#0057B8"];
 const MILESTONE_LEGEND = {
   "#D97706": "Marketing",
-  "#4F46E5": "Product",
-  "#DB2777": "Design",
-  "#059669": "Other",
-  "#DC2626": "Critical",
-  "#0057B8": "Engineering",
+  "#4F46E5": "Learning Network",
+  "#DB2777": "LMS",
+  "#059669": "Psychiatry Redefined",
+  "#DC2626": "Other",
+  "#0057B8": "Other",
 };
 
 const C = {
