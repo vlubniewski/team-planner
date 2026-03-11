@@ -244,6 +244,12 @@ export default function App() {
   const [editMilestone,     setEditMilestone]     = useState(null);
   const [milestoneForm,     setMilestoneForm]     = useState({title:"",dateKey:TODAY_KEY,color:"#D97706"});
   const [dayMsModal,        setDayMsModal]        = useState(null); // {dateKey, milestones[]}
+  const [nextPriorities,    setNextPriorities]    = useState(()=>{try{return JSON.parse(localStorage.getItem("nextPriorities")||"[]");}catch{return [];}});
+  const [dragPriority,      setDragPriority]      = useState(null);
+  const [showPriorityModal, setShowPriorityModal] = useState(false);
+  const [editPriority,      setEditPriority]      = useState(null);
+  const [priorityForm,      setPriorityForm]      = useState({title:"",startKey:"",endKey:"",color:"#4F46E5"});
+  const [priorityPanelOpen, setPriorityPanelOpen] = useState(true);
 
   const gridRef   = useRef(null);
   const nextId    = useRef(300);
@@ -262,6 +268,11 @@ export default function App() {
   const jiraTasks   = assignments.filter(a => a.fromJira && !a.isDone).length;
   const doneTasks   = assignments.filter(a => a.isDone).length;
   const manualTasks = assignments.filter(a => !a.fromJira && a.status !== "MILESTONE").length;
+
+  // persist next priorities to localStorage
+  useEffect(()=>{
+    try{localStorage.setItem("nextPriorities",JSON.stringify(nextPriorities));}catch{}
+  },[nextPriorities]);
 
   // column width measurement (desktop only)
   useEffect(()=>{
@@ -386,6 +397,44 @@ export default function App() {
     setShowMilestoneModal(false);
   };
   const delMilestone=id=>{updateAssignments(p=>p.filter(a=>a.id!==id));setShowMilestoneModal(false);};
+
+  // next priorities
+  const openAddPriority=()=>{
+    setEditPriority(null);
+    setPriorityForm({title:"",startKey:"",endKey:"",color:"#4F46E5"});
+    setShowPriorityModal(true);
+  };
+  const openEditPriority=(item)=>{
+    setEditPriority(item);
+    setPriorityForm({title:item.title,startKey:item.startKey||"",endKey:item.endKey||"",color:item.color||"#4F46E5"});
+    setShowPriorityModal(true);
+  };
+  const savePriority=()=>{
+    if(!priorityForm.title.trim()) return;
+    const item={
+      id: editPriority ? editPriority.id : `priority-${Date.now()}`,
+      title: priorityForm.title.trim(),
+      startKey: priorityForm.startKey||null,
+      endKey: priorityForm.endKey||priorityForm.startKey||null,
+      color: priorityForm.color,
+    };
+    if(editPriority) setNextPriorities(p=>p.map(x=>x.id===editPriority.id?item:x));
+    else setNextPriorities(p=>[...p,item]);
+    setShowPriorityModal(false);
+  };
+  const delPriority=(id)=>{setNextPriorities(p=>p.filter(x=>x.id!==id));setShowPriorityModal(false);};
+  const dropPriority=(memberId, dk, priority)=>{
+    const startKey = priority.startKey || dk;
+    const endKey   = priority.endKey   || (priority.startKey ? priority.startKey : dateKey(addDays(new Date(dk+"T12:00:00"),4)));
+    updateAssignments(p=>[...p,{
+      id:`manual-${nextId.current++}-${Date.now()}`,
+      title:priority.title,memberId,startKey,endKey,
+      fromJira:false,jiraKey:null,status:null,
+      dueDateKey:priority.endKey||null,resolvedKey:null,isDone:false,
+    }]);
+    setNextPriorities(p=>p.filter(x=>x.id!==priority.id));
+    setDragPriority(null);
+  };
 
   const syncFromJira=async()=>{
     setSyncing(true);setSyncStatus(null);
@@ -711,8 +760,8 @@ export default function App() {
                     const barColor=pct>80?"#DC2626":pct>60?"#D97706":member.color;
 
                     return[
-                      <tr key={`hdr-${member.id}`} style={{cursor:"pointer",background:C.surfaceHdr}} onClick={()=>setExpanded(p=>({...p,[member.id]:!p[member.id]}))}>
-                        <td style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,borderLeft:`3px solid ${member.color}`,padding:"0 10px",height:46,position:"sticky",left:0,zIndex:10,background:C.surfaceHdr}}>
+                      <tr key={`hdr-${member.id}`} style={{cursor:dragPriority?"copy":"pointer",background:dragPriority?`${dragPriority.color}0A`:C.surfaceHdr,transition:"background 0.1s"}} onClick={()=>!dragPriority&&setExpanded(p=>({...p,[member.id]:!p[member.id]}))} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragPriority)dropPriority(member.id,TODAY_KEY,dragPriority);}}>
+                        <td style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,borderLeft:`3px solid ${member.color}`,padding:"0 10px",height:46,position:"sticky",left:0,zIndex:10,background:dragPriority?`${dragPriority.color}0A`:C.surfaceHdr,transition:"background 0.1s"}}>
                           <div style={{display:"flex",alignItems:"center",gap:8}}>
                             <span style={{fontSize:9,color:C.textMuted,userSelect:"none",width:10}}>{isExpanded?"▾":"▸"}</span>
                             <div style={{width:28,height:28,borderRadius:8,background:`${member.color}18`,border:`1.5px solid ${member.color}50`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:member.color,flexShrink:0}}>{member.initials}</div>
@@ -793,7 +842,7 @@ export default function App() {
                             i++;
                           }else{
                             if(bar&&i>bar.sIdx&&i<bar.sIdx+bar.span){i++;continue;}
-                            cells.push(<td key={i} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,background:isToday?C.todayBg:C.surface,cursor:"crosshair"}} onClick={()=>openAdd(member.id,dk)}/>);
+                            cells.push(<td key={i} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,background:dragPriority?`${dragPriority.color}08`:isToday?C.todayBg:C.surface,cursor:dragPriority?"copy":"crosshair",transition:"background 0.1s"}} onClick={()=>openAdd(member.id,dk)} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragPriority)dropPriority(member.id,dk,dragPriority);}}/>);
                             i++;
                           }
                         }
@@ -821,6 +870,62 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* ── NEXT PRIORITIES / UPCOMING PANEL ────────────────────────────── */}
+      {!loading&&(
+        <div style={{flexShrink:0,borderTop:`2px solid ${C.borderMid}`,background:C.surfaceAlt,display:"flex",flexDirection:"column",maxHeight: priorityPanelOpen ? 220 : 42, transition:"max-height 0.2s ease",overflow:"hidden"}}>
+          {/* panel header */}
+          <div style={{display:"flex",alignItems:"center",gap:8,height:42,padding:"0 14px",flexShrink:0,borderBottom:priorityPanelOpen?`1px solid ${C.border}`:"none",background:C.surfaceAlt}}>
+            <button onClick={()=>setPriorityPanelOpen(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",color:C.textMuted,fontSize:11,padding:"2px 4px",lineHeight:1,transform:priorityPanelOpen?"rotate(0deg)":"rotate(-90deg)",transition:"transform 0.2s"}}>▼</button>
+            <span style={{fontSize:10,fontWeight:800,color:BRAND_NAVY,letterSpacing:"0.06em"}}>NEXT PRIORITIES / UPCOMING</span>
+            {nextPriorities.length>0&&<span style={{fontSize:10,color:C.textMuted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"1px 7px",fontWeight:600}}>{nextPriorities.length}</span>}
+            {priorityPanelOpen&&<span style={{fontSize:10,color:C.textMuted,marginLeft:4}}>— Drag items onto the calendar to assign</span>}
+            <div style={{flex:1}}/>
+            {priorityPanelOpen&&(
+              <button onClick={openAddPriority} style={{background:BRAND_BLUE,border:"none",color:"white",fontSize:11,fontWeight:700,padding:"5px 12px",borderRadius:6,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+                <span style={{fontSize:14,lineHeight:1}}>+</span> Add Item
+              </button>
+            )}
+          </div>
+          {/* panel body */}
+          {priorityPanelOpen&&(
+            <div style={{flex:1,overflowX:"auto",overflowY:"hidden",display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",minHeight:0}}>
+              {nextPriorities.length===0?(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",width:"100%",color:C.textMuted,fontSize:12,fontStyle:"italic",gap:8}}>
+                  <span style={{fontSize:16}}>📋</span> No upcoming items yet — click <strong style={{color:BRAND_BLUE,fontStyle:"normal",marginLeft:3}}>+ Add Item</strong> to create your next priorities
+                </div>
+              ):(
+                nextPriorities.map(item=>(
+                  <div key={item.id}
+                    draggable
+                    onDragStart={e=>{setDragPriority(item);e.dataTransfer.effectAllowed="move";}}
+                    onDragEnd={()=>setDragPriority(null)}
+                    onClick={()=>openEditPriority(item)}
+                    style={{flexShrink:0,width:200,borderRadius:8,background:`linear-gradient(135deg,${item.color},${item.color}CC)`,borderLeft:`4px solid ${item.color}DD`,boxShadow:`0 2px 10px ${item.color}40`,cursor:"grab",padding:"8px 10px",userSelect:"none",opacity:dragPriority?.id===item.id?0.5:1,transition:"opacity 0.15s,transform 0.1s",position:"relative"}}
+                    onMouseEnter={e=>{if(!dragPriority)e.currentTarget.style.transform="translateY(-2px)";}}
+                    onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";}}
+                  >
+                    <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}>
+                      <span style={{fontSize:9,color:"rgba(255,255,255,0.8)"}}>◆</span>
+                      <span style={{fontSize:11,fontWeight:700,color:"white",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1,textShadow:"0 1px 2px rgba(0,0,0,0.25)"}}>{item.title}</span>
+                      <span style={{fontSize:9,color:"rgba(255,255,255,0.5)",cursor:"pointer"}}>⣿</span>
+                    </div>
+                    {item.startKey?(
+                      <div style={{fontSize:9,color:"rgba(255,255,255,0.75)",background:"rgba(0,0,0,0.12)",borderRadius:4,padding:"2px 5px",display:"inline-flex",alignItems:"center",gap:3}}>
+                        📅 {fmtDate(item.startKey)}{item.endKey&&item.endKey!==item.startKey?` → ${fmtDate(item.endKey)}`:""}
+                      </div>
+                    ):(
+                      <div style={{fontSize:9,color:"rgba(255,255,255,0.85)",background:"rgba(0,0,0,0.18)",borderRadius:4,padding:"2px 6px",display:"inline-flex",alignItems:"center",gap:3,fontWeight:600}}>
+                        🔧 Needs Developer Sizing
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* desktop tooltip */}
       {tooltip&&(
@@ -952,6 +1057,70 @@ export default function App() {
     </div>
   );
 
+  const PRIORITY_COLORS = ["#4F46E5","#1D6FE8","#059669","#D97706","#DB2777","#DC2626","#0F172A","#0057B8"];
+
+  const PriorityModal = showPriorityModal && (
+    <div onClick={()=>setShowPriorityModal(false)} style={modalOverlay}>
+      <div onClick={e=>e.stopPropagation()} style={modalCard}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMuted,letterSpacing:"0.07em",marginBottom:3}}>NEXT PRIORITIES / UPCOMING</div>
+            <div style={{fontSize:16,fontWeight:800,color:BRAND_NAVY}}>{editPriority?"Edit Item":"New Priority Item"}</div>
+          </div>
+          <button onClick={()=>setShowPriorityModal(false)} style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,color:C.textMuted,width:30,height:30,borderRadius:8,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div>
+            <label style={labelStyle}>Item Title</label>
+            <input value={priorityForm.title} onChange={e=>setPriorityForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Redesign Homepage, API Migration" autoFocus style={inputStyle}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div>
+              <label style={labelStyle}>Start Date <span style={{color:C.textMuted,fontWeight:400}}>(optional)</span></label>
+              <input type="date" value={priorityForm.startKey} onChange={e=>setPriorityForm(f=>({...f,startKey:e.target.value}))} style={{...inputStyle,cursor:"pointer",colorScheme:"light"}}/>
+            </div>
+            <div>
+              <label style={labelStyle}>End Date <span style={{color:C.textMuted,fontWeight:400}}>(optional)</span></label>
+              <input type="date" value={priorityForm.endKey} min={priorityForm.startKey} onChange={e=>setPriorityForm(f=>({...f,endKey:e.target.value}))} style={{...inputStyle,cursor:"pointer",colorScheme:"light"}} disabled={!priorityForm.startKey}/>
+            </div>
+          </div>
+          {!priorityForm.startKey&&(
+            <div style={{display:"flex",alignItems:"center",gap:6,background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:7,padding:"8px 12px"}}>
+              <span style={{fontSize:14}}>🔧</span>
+              <span style={{fontSize:11,color:"#92400E",fontWeight:600}}>No dates set — will show as "Needs Developer Sizing"</span>
+            </div>
+          )}
+          <div>
+            <label style={labelStyle}>Color Tag</label>
+            <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+              {PRIORITY_COLORS.map(c=>(
+                <button key={c} onClick={()=>setPriorityForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:7,background:c,border:priorityForm.color===c?`3px solid ${BRAND_NAVY}`:`2px solid ${c}40`,cursor:"pointer",boxShadow:priorityForm.color===c?`0 0 0 2px white,0 0 0 4px ${c}`:"none",transition:"all 0.15s"}}/>
+              ))}
+            </div>
+          </div>
+          {/* preview */}
+          <div style={{borderRadius:8,background:`linear-gradient(135deg,${priorityForm.color},${priorityForm.color}CC)`,padding:"10px 14px",borderLeft:`4px solid ${priorityForm.color}DD`,boxShadow:`0 2px 10px ${priorityForm.color}30`}}>
+            <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
+              <span style={{fontSize:9,color:"rgba(255,255,255,0.8)"}}>◆</span>
+              <span style={{fontSize:12,fontWeight:700,color:"white",textShadow:"0 1px 2px rgba(0,0,0,0.2)"}}>{priorityForm.title||"Item preview…"}</span>
+            </div>
+            {priorityForm.startKey?(
+              <span style={{fontSize:9,color:"rgba(255,255,255,0.8)",background:"rgba(0,0,0,0.12)",borderRadius:4,padding:"2px 5px"}}>📅 {fmtDate(priorityForm.startKey)}{priorityForm.endKey&&priorityForm.endKey!==priorityForm.startKey?` → ${fmtDate(priorityForm.endKey)}`:""}</span>
+            ):(
+              <span style={{fontSize:9,color:"rgba(255,255,255,0.85)",background:"rgba(0,0,0,0.18)",borderRadius:4,padding:"2px 6px",fontWeight:600}}>🔧 Needs Developer Sizing</span>
+            )}
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:4}}>
+            {editPriority&&<button onClick={()=>delPriority(editPriority.id)} style={{flex:1,background:"#FEF2F2",border:"1px solid #FECACA",color:"#DC2626",padding:10,borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:600}}>Delete</button>}
+            <button onClick={savePriority} disabled={!priorityForm.title.trim()} style={{flex:2,background:priorityForm.color,border:"none",color:"white",padding:10,borderRadius:8,fontSize:14,cursor:priorityForm.title.trim()?"pointer":"not-allowed",fontWeight:700,opacity:priorityForm.title.trim()?1:0.5}}>
+              {editPriority?"Save Item":"Add to Priorities"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   const DayMilestonesModal = dayMsModal && (
     <div onClick={()=>setDayMsModal(null)} style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.45)",backdropFilter:"blur(3px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000,padding:20}}>
       <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:16,boxShadow:"0 24px 60px rgba(0,0,0,0.22)",width:"100%",maxWidth:360,padding:24}}>
@@ -992,6 +1161,7 @@ export default function App() {
       {isMobile ? MobileContent : DesktopContent}
       {AssignmentModal}
       {MilestoneModal}
+      {PriorityModal}
       {DayMilestonesModal}
       <style>{`
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
