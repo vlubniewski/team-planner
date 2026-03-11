@@ -246,6 +246,7 @@ export default function App() {
   const [dayMsModal,        setDayMsModal]        = useState(null); // {dateKey, milestones[]}
   const [nextPriorities,    setNextPriorities]    = useState(()=>{try{return JSON.parse(localStorage.getItem("nextPriorities")||"[]");}catch{return [];}});
   const [dragPriority,      setDragPriority]      = useState(null);
+  const [dragAssignment,    setDragAssignment]    = useState(null);
   const [showPriorityModal, setShowPriorityModal] = useState(false);
   const [editPriority,      setEditPriority]      = useState(null);
   const [priorityForm,      setPriorityForm]      = useState({title:"",startKey:"",endKey:"",color:"#4F46E5"});
@@ -423,6 +424,18 @@ export default function App() {
     setShowPriorityModal(false);
   };
   const delPriority=(id)=>{setNextPriorities(p=>p.filter(x=>x.id!==id));setShowPriorityModal(false);};
+  const dropAssignmentToPriorities=(a)=>{
+    setNextPriorities(p=>[...p,{
+      id:`priority-${Date.now()}`,
+      title:a.title,
+      startKey:a.startKey||null,
+      endKey:a.endKey||null,
+      color:TEAM_MEMBERS.find(m=>m.id===a.memberId)?.color||"#4F46E5",
+    }]);
+    updateAssignments(p=>p.filter(x=>x.id!==a.id));
+    setDragAssignment(null);
+    setPriorityPanelOpen(true);
+  };
   const dropPriority=(memberId, dk, priority)=>{
     const startKey = priority.startKey || dk;
     const endKey   = priority.endKey   || (priority.startKey ? priority.startKey : dateKey(addDays(new Date(dk+"T12:00:00"),4)));
@@ -509,37 +522,43 @@ export default function App() {
   );
 
   const TopBarMobile = (
-    <div style={{background:BRAND_NAVY,padding:"10px 14px 8px",flexShrink:0,borderRadius:"14px 14px 0 0"}}>
-      {/* row 1: logo + date + sync */}
+    <div style={{background:BRAND_NAVY,padding:"10px 12px 10px",flexShrink:0,borderRadius:"14px 14px 0 0"}}>
+      {/* row 1: logo + wordmark + save + sync */}
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M3 3h3v6h8V3h3v14h-3v-5H6v5H3V3z" fill={BRAND_BLUE}/></svg>
-        <span style={{fontSize:12,fontWeight:800,color:"#FFF"}}>HMP</span>
-        <span style={{fontSize:11,fontWeight:400,color:"rgba(255,255,255,0.5)"}}>Team Planner</span>
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M3 3h3v6h8V3h3v14h-3v-5H6v5H3V3z" fill={BRAND_BLUE}/></svg>
+        <span style={{fontSize:13,fontWeight:800,color:"#FFF",letterSpacing:"-0.2px"}}>HMP</span>
+        <span style={{fontSize:12,fontWeight:400,color:"rgba(255,255,255,0.45)"}}>Team Planner</span>
         <div style={{flex:1}}/>
         <SaveStatus status={saveStatus}/>
-        <button onClick={syncFromJira} disabled={syncing} style={{background:syncing?"rgba(255,255,255,0.08)":BRAND_BLUE,border:"none",color:"white",padding:"5px 10px",borderRadius:6,fontSize:10,fontWeight:600,cursor:syncing?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:4,opacity:syncing?0.7:1}}>
-          <span style={{display:"inline-block",animation:syncing?"spin 1s linear infinite":"none",fontSize:12}}>⟳</span>
-          {syncing?"…":"Sync"}
+        <button onClick={syncFromJira} disabled={syncing} style={{minHeight:34,background:syncing?"rgba(255,255,255,0.08)":BRAND_BLUE,border:"none",color:"white",padding:"0 12px",borderRadius:7,fontSize:11,fontWeight:600,cursor:syncing?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:5,opacity:syncing?0.7:1,flexShrink:0}}>
+          <span style={{display:"inline-block",animation:syncing?"spin 1s linear infinite":"none",fontSize:14,lineHeight:1}}>⟳</span>
+          {syncing?"Syncing…":"Sync WOPS"}
         </button>
       </div>
-      {/* row 2: date nav + toggles */}
-      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-        <div style={{display:"flex",alignItems:"center",gap:2,background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:7,padding:"2px 4px"}}>
-          <button onClick={()=>setMonthOffset(o=>o-1)} style={{background:"none",border:"none",color:"rgba(255,255,255,0.7)",cursor:"pointer",fontSize:14,padding:"1px 4px",lineHeight:1}}>‹</button>
-          <span style={{fontSize:11,fontWeight:600,color:"#FFF",minWidth:130,textAlign:"center"}}>{monthLabel}</span>
-          <button onClick={()=>setMonthOffset(o=>o+1)} style={{background:"none",border:"none",color:"rgba(255,255,255,0.7)",cursor:"pointer",fontSize:14,padding:"1px 4px",lineHeight:1}}>›</button>
-        </div>
-        {monthOffset!==0&&<button onClick={()=>setMonthOffset(0)} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.7)",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>Today</button>}
-        <button onClick={()=>setShowDone(v=>!v)} style={{background:showDone?`${DONE_COLOR}25`:"rgba(255,255,255,0.08)",border:`1px solid ${showDone?DONE_COLOR+"60":"rgba(255,255,255,0.15)"}`,color:showDone?"#4ADE80":"rgba(255,255,255,0.4)",fontSize:10,padding:"3px 9px",borderRadius:5,cursor:"pointer",fontWeight:600}}>
-          {showDone?"Hide Done":"Show Done"}
+      {/* row 2: month nav (full width) */}
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+        <button onClick={()=>setMonthOffset(o=>o-1)} style={{minWidth:36,minHeight:36,background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.8)",cursor:"pointer",fontSize:18,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>‹</button>
+        <div style={{flex:1,textAlign:"center",fontSize:13,fontWeight:700,color:"#FFF",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{monthLabel}</div>
+        <button onClick={()=>setMonthOffset(o=>o+1)} style={{minWidth:36,minHeight:36,background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.8)",cursor:"pointer",fontSize:18,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>›</button>
+        {monthOffset!==0&&<button onClick={()=>setMonthOffset(0)} style={{minHeight:36,background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.2)",color:"rgba(255,255,255,0.8)",fontSize:11,padding:"0 10px",borderRadius:8,cursor:"pointer",fontWeight:600,flexShrink:0}}>Today</button>}
+      </div>
+      {/* row 3: toggles + mini stats */}
+      <div style={{display:"flex",alignItems:"center",gap:6}}>
+        <button onClick={()=>setShowDone(v=>!v)} style={{flex:1,minHeight:32,background:showDone?`${DONE_COLOR}20`:"rgba(255,255,255,0.07)",border:`1px solid ${showDone?DONE_COLOR+"50":"rgba(255,255,255,0.12)"}`,color:showDone?"#4ADE80":"rgba(255,255,255,0.45)",fontSize:11,borderRadius:7,cursor:"pointer",fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+          <span style={{fontSize:8,lineHeight:1}}>●</span>{showDone?"Hide Done":"Show Done"}
         </button>
-        <button onClick={()=>setStrategicMode(v=>!v)} style={{background:strategicMode?`${BRAND_BLUE}35`:"rgba(255,255,255,0.08)",border:`1px solid ${strategicMode?BRAND_BLUE+"90":"rgba(255,255,255,0.15)"}`,color:strategicMode?"#60A5FA":"rgba(255,255,255,0.4)",fontSize:10,padding:"3px 9px",borderRadius:5,cursor:"pointer",fontWeight:600}}>
-          ◆ {strategicMode?"Planned":"Operational"}
+        <button onClick={()=>setStrategicMode(v=>!v)} style={{flex:1,minHeight:32,background:strategicMode?`${BRAND_BLUE}30`:"rgba(255,255,255,0.07)",border:`1px solid ${strategicMode?BRAND_BLUE+"70":"rgba(255,255,255,0.12)"}`,color:strategicMode?"#60A5FA":"rgba(255,255,255,0.45)",fontSize:11,borderRadius:7,cursor:"pointer",fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+          <span style={{fontSize:8}}>◆</span>{strategicMode?"Planned":"Ops"}
         </button>
-        {/* mini stats */}
-        <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{fontSize:11,fontWeight:700,color:"#60A5FA"}}>{jiraTasks}<span style={{fontSize:9,fontWeight:400,color:"rgba(255,255,255,0.4)",marginLeft:2}}>active</span></span>
-          <span style={{fontSize:11,fontWeight:700,color:"#A78BFA"}}>{manualTasks}<span style={{fontSize:9,fontWeight:400,color:"rgba(255,255,255,0.4)",marginLeft:2}}>planned</span></span>
+        <div style={{display:"flex",gap:10,alignItems:"center",paddingLeft:4,flexShrink:0}}>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1}}>
+            <span style={{fontSize:13,fontWeight:800,color:"#60A5FA"}}>{jiraTasks}</span>
+            <span style={{fontSize:8,color:"rgba(255,255,255,0.35)",marginTop:1}}>active</span>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1}}>
+            <span style={{fontSize:13,fontWeight:800,color:"#A78BFA"}}>{manualTasks}</span>
+            <span style={{fontSize:8,color:"rgba(255,255,255,0.35)",marginTop:1}}>planned</span>
+          </div>
         </div>
       </div>
     </div>
@@ -808,9 +827,9 @@ export default function App() {
                           const isDoneDay=a.isDone&&resolvedIdx===i;
                           if(isBarStart){
                             if(isManual){
-                              cells.push(<td key={i} colSpan={bar.span} style={{borderBottom:`1px solid ${C.border}`,borderRight:"none",background:isToday?C.todayBg:C.surface,padding:"4px 2px",cursor:"pointer"}} onClick={e=>openEdit(e,a)}>
+                              cells.push(<td key={i} colSpan={bar.span} draggable onDragStart={e=>{setDragAssignment(a);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDragAssignment(null)} style={{borderBottom:`1px solid ${C.border}`,borderRight:"none",background:isToday?C.todayBg:C.surface,padding:"4px 2px",cursor:"grab",opacity:dragAssignment?.id===a.id?0.4:1,transition:"opacity 0.15s"}} onClick={e=>openEdit(e,a)}>
                                 <div onMouseEnter={e=>setTooltip({id:a.id,x:e.clientX,y:e.clientY,a})} onMouseLeave={()=>setTooltip(null)}
-                                  style={{height:26,borderRadius:5,background:`linear-gradient(135deg,${member.color},${member.color}CC)`,borderLeft:`4px solid ${member.color}DD`,display:"flex",alignItems:"center",padding:"0 8px",gap:5,boxShadow:`0 2px 8px ${member.color}40`,overflow:"hidden",cursor:"pointer"}}>
+                                  style={{height:26,borderRadius:5,background:`linear-gradient(135deg,${member.color},${member.color}CC)`,borderLeft:`4px solid ${member.color}DD`,display:"flex",alignItems:"center",padding:"0 8px",gap:5,boxShadow:`0 2px 8px ${member.color}40`,overflow:"hidden",cursor:"grab"}}>
                                   <span style={{fontSize:9,color:"rgba(255,255,255,0.8)",flexShrink:0}}>◆</span>
                                   <span style={{fontSize:11,fontWeight:700,color:"white",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textShadow:"0 1px 2px rgba(0,0,0,0.3)"}}>{a.title}</span>
                                 </div>
@@ -873,13 +892,16 @@ export default function App() {
 
       {/* ── NEXT PRIORITIES / UPCOMING PANEL ────────────────────────────── */}
       {!loading&&(
-        <div style={{flexShrink:0,borderTop:`2px solid ${C.borderMid}`,background:C.surfaceAlt,display:"flex",flexDirection:"column",maxHeight: priorityPanelOpen ? 220 : 42, transition:"max-height 0.2s ease",overflow:"hidden"}}>
+        <div
+          onDragOver={e=>{if(dragAssignment)e.preventDefault();}}
+          onDrop={e=>{e.preventDefault();if(dragAssignment)dropAssignmentToPriorities(dragAssignment);}}
+          style={{flexShrink:0,borderTop:`2px solid ${dragAssignment?"#4F46E5":C.borderMid}`,background:dragAssignment?"#EEF2FF":C.surfaceAlt,display:"flex",flexDirection:"column",maxHeight: priorityPanelOpen ? 220 : 42, transition:"max-height 0.2s ease, background 0.15s, border-color 0.15s",overflow:"hidden"}}>
           {/* panel header */}
-          <div style={{display:"flex",alignItems:"center",gap:8,height:42,padding:"0 14px",flexShrink:0,borderBottom:priorityPanelOpen?`1px solid ${C.border}`:"none",background:C.surfaceAlt}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,height:42,padding:"0 14px",flexShrink:0,borderBottom:priorityPanelOpen?`1px solid ${C.border}`:"none",background:"transparent"}}>
             <button onClick={()=>setPriorityPanelOpen(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",color:C.textMuted,fontSize:11,padding:"2px 4px",lineHeight:1,transform:priorityPanelOpen?"rotate(0deg)":"rotate(-90deg)",transition:"transform 0.2s"}}>▼</button>
             <span style={{fontSize:10,fontWeight:800,color:BRAND_NAVY,letterSpacing:"0.06em"}}>NEXT PRIORITIES / UPCOMING</span>
             {nextPriorities.length>0&&<span style={{fontSize:10,color:C.textMuted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"1px 7px",fontWeight:600}}>{nextPriorities.length}</span>}
-            {priorityPanelOpen&&<span style={{fontSize:10,color:C.textMuted,marginLeft:4}}>— Drag items onto the calendar to assign</span>}
+            {priorityPanelOpen&&<span style={{fontSize:10,color:dragAssignment?"#4F46E5":C.textMuted,marginLeft:4,fontWeight:dragAssignment?700:400,transition:"color 0.15s"}}>{dragAssignment?"⬇ Drop here to send back to priorities":"— Drag items onto the calendar to assign · drag calendar items here to unassign"}</span>}
             <div style={{flex:1}}/>
             {priorityPanelOpen&&(
               <button onClick={openAddPriority} style={{background:BRAND_BLUE,border:"none",color:"white",fontSize:11,fontWeight:700,padding:"5px 12px",borderRadius:6,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
