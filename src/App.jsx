@@ -142,7 +142,8 @@ export default function App() {
           let dueDateKey = null;
           if (duedate) { const dd = new Date(duedate); dd.setHours(0,0,0,0); dueDateKey = dateKey(dd); }
           let resolvedKey = null;
-          if (resolutiondate) { const rd = new Date(resolutiondate); rd.setHours(0,0,0,0); resolvedKey = dateKey(rd); }
+          const resolvedRaw = issue.fields.transitionDate || issue.fields.resolutiondate;
+          if (resolvedRaw) { const rd = new Date(resolvedRaw); rd.setHours(0,0,0,0); resolvedKey = dateKey(rd); }
           return { id: `jira-${issue.id}`, title: summary, memberId: member.id, startKey: null, endKey: null, fromJira: true, jiraKey: issue.key, status: issue.fields.status?.name, dueDateKey, resolvedKey, isDone };
         };
 
