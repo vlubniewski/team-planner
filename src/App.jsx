@@ -12,6 +12,7 @@ const SIDEBAR_W = 200;
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 const TODAY_KEY = TODAY.toISOString().slice(0,10);
 const DONE_COLOR = "#22C55E";
+const MILESTONE_COLORS = ["#F59E0B", "#6366F1", "#EC4899", "#10B981", "#F85149", "#3B82F6"];
 
 function dateKey(d) { return new Date(d).toISOString().slice(0,10); }
 function isWeekend(d) { const day = new Date(d).getDay(); return day === 0 || day === 6; }
@@ -79,6 +80,7 @@ export default function App() {
   const [assignments, setAssignments] = useState([]);
   const [expanded, setExpanded] = useState({ 1: true, 2: true, 3: true, 4: true });
   const [showDone, setShowDone] = useState(true);
+  const [strategicMode, setStrategicMode] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({ title: "", memberId: 1, startKey: TODAY_KEY, endKey: dateKey(addDays(TODAY, 4)), fromJira: false, dueDateKey: null });
@@ -87,6 +89,11 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState(null);
   const [saveStatus, setSaveStatus] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Milestone state
+  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
+  const [editMilestone, setEditMilestone] = useState(null);
+  const [milestoneForm, setMilestoneForm] = useState({ title: "", dateKey: TODAY_KEY, color: "#F59E0B" });
+
   const gridRef = useRef(null);
   const nextId = useRef(300);
   const [colW, setColW] = useState(0);
@@ -97,6 +104,9 @@ export default function App() {
   const monthGroups = getMonthGroups(DAYS);
   const weekGroups = getWeekGroups(DAYS);
   const dayKeys = DAYS.map(d => dateKey(d));
+
+  // Derived collections
+  const milestones = assignments.filter(a => a.status === 'MILESTONE');
 
   useEffect(() => {
     const measure = () => {
@@ -113,7 +123,6 @@ export default function App() {
     const load = async () => {
       setLoading(true);
       try {
-        // Load saved assignments
         const res = await fetch('/api/assignments');
         const data = await res.json();
         let saved = [];
@@ -127,7 +136,6 @@ export default function App() {
           }));
         }
 
-        // Auto-sync Jira in parallel
         const [activeRes, doneRes] = await Promise.all([
           fetch(`/api/jira?jql=${encodeURIComponent('status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC')}`),
           fetch(`/api/jira?jql=${encodeURIComponent('status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC')}`),
@@ -152,11 +160,10 @@ export default function App() {
           ...(doneData.issues || []).map(i => mapIssue(i, true)),
         ].filter(Boolean);
 
-        // Merge: keep manual items from saved, replace all jira items with fresh ones
+        // Preserve milestones and manual items, replace jira items
         const merged = [...saved.filter(a => !a.fromJira), ...jiraItems];
         setAssignments(merged);
 
-        // Persist the merged result
         await fetch('/api/assignments', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -191,6 +198,7 @@ export default function App() {
     });
   }, [persistAssignments]);
 
+  // Assignment modal
   const openAdd = (memberId, dk) => {
     setEditItem(null);
     setForm({ title: "", memberId, startKey: dk, endKey: dateKey(addDays(new Date(dk + "T12:00:00"), 4)), fromJira: false, dueDateKey: null });
@@ -210,12 +218,49 @@ export default function App() {
   };
   const del = id => { updateAssignments(p => p.filter(a => a.id !== id)); setShowModal(false); };
 
+  // Milestone modal
+  const openAddMilestone = (dk) => {
+    setEditMilestone(null);
+    setMilestoneForm({ title: "", dateKey: dk || TODAY_KEY, color: "#F59E0B" });
+    setShowMilestoneModal(true);
+  };
+  const openEditMilestone = (e, m) => {
+    e.stopPropagation();
+    setEditMilestone(m);
+    setMilestoneForm({ title: m.title, dateKey: m.startKey, color: m.jiraKey || "#F59E0B" });
+    setShowMilestoneModal(true);
+  };
+  const saveMilestone = () => {
+    if (!milestoneForm.title.trim()) return;
+    const ms = {
+      id: editMilestone ? editMilestone.id : `milestone-${nextId.current++}-${Date.now()}`,
+      title: milestoneForm.title,
+      memberId: null,
+      startKey: milestoneForm.dateKey,
+      endKey: milestoneForm.dateKey,
+      fromJira: false,
+      jiraKey: milestoneForm.color, // store color in jiraKey field
+      status: 'MILESTONE',
+      dueDateKey: null,
+      resolvedKey: null,
+      isDone: false,
+    };
+    if (editMilestone) {
+      updateAssignments(p => p.map(a => a.id === editMilestone.id ? ms : a));
+    } else {
+      updateAssignments(p => [...p, ms]);
+    }
+    setShowMilestoneModal(false);
+  };
+  const delMilestone = (id) => {
+    updateAssignments(p => p.filter(a => a.id !== id));
+    setShowMilestoneModal(false);
+  };
+
   const syncFromJira = async () => {
     setSyncing(true); setSyncStatus(null);
     try {
-      // Fetch active items
       const activeJql = encodeURIComponent('status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC');
-      // Fetch done/deployed items
       const doneJql = encodeURIComponent('status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC');
 
       const [activeRes, doneRes] = await Promise.all([
@@ -246,10 +291,9 @@ export default function App() {
     setSyncing(false);
   };
 
-  const totalTasks = assignments.length;
   const jiraTasks = assignments.filter(a => a.fromJira && !a.isDone).length;
   const doneTasks = assignments.filter(a => a.isDone).length;
-  const manualTasks = assignments.filter(a => !a.fromJira).length;
+  const manualTasks = assignments.filter(a => !a.fromJira && a.status !== 'MILESTONE').length;
   const monthLabel = monthGroups.map(g => g.label).join(" – ");
 
   return (
@@ -273,10 +317,24 @@ export default function App() {
           <span style={{ fontSize: 9 }}>●</span> {showDone ? "Hide" : "Show"} Done
         </button>
 
+        {/* Strategic View toggle */}
+        <button
+          onClick={() => setStrategicMode(v => !v)}
+          style={{
+            background: strategicMode ? "#1E1040" : "none",
+            border: `1px solid ${strategicMode ? "#6366F1" : "#30363D"}`,
+            color: strategicMode ? "#818CF8" : "#484F58",
+            fontSize: 11, padding: "3px 10px", borderRadius: 6, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 5, fontWeight: 600, transition: "all 0.15s"
+          }}
+        >
+          <span style={{ fontSize: 10 }}>◆</span> {strategicMode ? "Strategic" : "Strategic"}
+        </button>
+
         <div style={{ flex: 1 }} />
         <SaveStatus status={saveStatus} />
         <div style={{ display: "flex", gap: 12, alignItems: "center", marginLeft: 12, marginRight: 12 }}>
-          {[{ label: "Active", value: jiraTasks, color: "#3B82F6" }, { label: "Done", value: doneTasks, color: DONE_COLOR }, { label: "Manual", value: manualTasks, color: "#6366F1" }].map(s => (
+          {[{ label: "Active", value: jiraTasks, color: "#3B82F6" }, { label: "Done", value: doneTasks, color: DONE_COLOR }, { label: "Strategic", value: manualTasks, color: "#6366F1" }].map(s => (
             <div key={s.label} style={{ textAlign: "center" }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: s.color, lineHeight: 1 }}>{s.value}</div>
               <div style={{ fontSize: 9, color: "#484F58", marginTop: 1 }}>{s.label}</div>
@@ -287,10 +345,28 @@ export default function App() {
           <span style={{ fontSize: 13, display: "inline-block", animation: syncing ? "spin 1s linear infinite" : "none" }}>⟳</span>
           {syncing ? "Syncing…" : "Sync WOPS"}
         </button>
+
+        {/* Milestone button */}
+        <button
+          onClick={() => openAddMilestone(TODAY_KEY)}
+          style={{ background: "none", border: "1px solid #F59E0B55", color: "#F59E0B", padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, marginRight: 4 }}
+        >
+          🚩 Milestone
+        </button>
+
         <button onClick={() => openAdd(1, TODAY_KEY)} style={{ background: "#238636", border: "1px solid #2EA043", color: "white", padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Add
         </button>
       </div>
+
+      {/* Strategic mode banner */}
+      {strategicMode && (
+        <div style={{ background: "linear-gradient(90deg, #1E1040, #0D0F14)", borderBottom: "1px solid #6366F133", padding: "5px 20px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <span style={{ fontSize: 10, color: "#818CF8", fontWeight: 700, letterSpacing: "0.08em" }}>◆ STRATEGIC VIEW</span>
+          <span style={{ fontSize: 10, color: "#484F58" }}>— Jira operational tickets hidden. Showing only manual strategic items and milestones.</span>
+          <button onClick={() => setStrategicMode(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#484F58", cursor: "pointer", fontSize: 11 }}>Exit ✕</button>
+        </div>
+      )}
 
       {syncStatus && (
         <div style={{ background: syncStatus.type === "success" ? "#0D3321" : "#3D1414", borderBottom: `1px solid ${syncStatus.type === "success" ? "#2EA043" : "#F85149"}`, padding: "6px 20px", fontSize: 12, color: syncStatus.type === "success" ? "#3FB950" : "#F85149", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
@@ -324,21 +400,93 @@ export default function App() {
                   <th style={{ borderBottom: "2px solid #30363D", borderRight: "1px solid #21262D", position: "sticky", top: 50, zIndex: 20, background: "#0D0F14" }} />
                   {DAYS.map((d, i) => {
                     const isToday = dateKey(d) === TODAY_KEY;
-                    return <th key={i} style={{ borderBottom: "2px solid #30363D", borderRight: "1px solid #1A1F26", padding: "2px 0", textAlign: "center", fontSize: 9, color: isToday ? "#6366F1" : "#484F58", fontWeight: isToday ? 800 : 400, background: isToday ? "#1A1F2E" : "#0D0F14", position: "sticky", top: 50, zIndex: 19 }}>{isToday ? "•" : d.getDate()}</th>;
+                    const msOnDay = milestones.filter(m => m.startKey === dateKey(d));
+                    return (
+                      <th key={i} style={{ borderBottom: "2px solid #30363D", borderRight: "1px solid #1A1F26", padding: "2px 0", textAlign: "center", fontSize: 9, color: isToday ? "#6366F1" : "#484F58", fontWeight: isToday ? 800 : 400, background: msOnDay.length > 0 ? `${msOnDay[0].jiraKey}22` : isToday ? "#1A1F2E" : "#0D0F14", position: "sticky", top: 50, zIndex: 19 }}>
+                        {isToday ? "•" : d.getDate()}
+                        {msOnDay.length > 0 && <div style={{ fontSize: 7, color: msOnDay[0].jiraKey, marginTop: 1 }}>◆</div>}
+                      </th>
+                    );
                   })}
                 </tr>
               </thead>
               <tbody>
+
+                {/* ── MILESTONES ROW ── */}
+                <tr key="milestones-row" style={{ background: "#0D0F14" }}>
+                  <td style={{ borderBottom: "2px solid #30363D", borderRight: "1px solid #21262D", padding: "0 8px 0 14px", height: 44, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 8, color: "#F59E0B", letterSpacing: "0.08em" }}>🚩</span>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: "#6B7280", letterSpacing: "0.08em" }}>MILESTONES</span>
+                      </div>
+                      <button
+                        onClick={() => openAddMilestone(TODAY_KEY)}
+                        style={{ background: "none", border: "1px solid #F59E0B44", color: "#F59E0B", fontSize: 9, padding: "2px 6px", borderRadius: 4, cursor: "pointer", fontWeight: 700 }}
+                      >+</button>
+                    </div>
+                  </td>
+                  {DAYS.map((d, i) => {
+                    const dk = dayKeys[i];
+                    const isToday = dk === TODAY_KEY;
+                    const msOnDay = milestones.filter(m => m.startKey === dk);
+                    return (
+                      <td
+                        key={i}
+                        style={{
+                          borderBottom: "2px solid #30363D",
+                          borderRight: "1px solid #1A1F26",
+                          background: msOnDay.length > 0 ? `${msOnDay[0].jiraKey}18` : isToday ? "#1A1F2E22" : "transparent",
+                          padding: "3px 1px",
+                          cursor: msOnDay.length === 0 ? "crosshair" : "default",
+                          verticalAlign: "middle",
+                        }}
+                        onClick={() => msOnDay.length === 0 && openAddMilestone(dk)}
+                      >
+                        {msOnDay.map(ms => (
+                          <div
+                            key={ms.id}
+                            onClick={e => openEditMilestone(e, ms)}
+                            onMouseEnter={e => setTooltip({ id: ms.id, x: e.clientX, y: e.clientY, a: { title: ms.title, startKey: ms.startKey, status: "Milestone", fromJira: false, jiraKey: null } })}
+                            onMouseLeave={() => setTooltip(null)}
+                            style={{
+                              height: 34,
+                              borderRadius: 5,
+                              background: `linear-gradient(135deg, ${ms.jiraKey}33, ${ms.jiraKey}18)`,
+                              border: `2px solid ${ms.jiraKey}`,
+                              display: "flex", alignItems: "center", padding: "0 5px", gap: 4,
+                              cursor: "pointer",
+                              boxShadow: `0 0 8px ${ms.jiraKey}44`,
+                            }}
+                          >
+                            <span style={{ fontSize: 9 }}>🚩</span>
+                            <span style={{ fontSize: 8, fontWeight: 800, color: ms.jiraKey, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ms.title}</span>
+                          </div>
+                        ))}
+                      </td>
+                    );
+                  })}
+                </tr>
+
+                {/* ── TEAM MEMBER ROWS ── */}
                 {TEAM_MEMBERS.map(member => {
                   const allTasks = assignments.filter(a => a.memberId === member.id);
-                  const mTasks = allTasks.filter(a => showDone ? true : !a.isDone);
+                  const filteredByDone = allTasks.filter(a => showDone ? true : !a.isDone);
+                  // In strategic mode, only show manual (non-Jira) items
+                  const mTasks = strategicMode
+                    ? filteredByDone.filter(a => !a.fromJira)
+                    : filteredByDone;
                   const isExpanded = expanded[member.id];
+
                   const visibleDays = allTasks.filter(a => a.startKey && a.endKey).reduce((s, a) => {
                     const bar = getBarSpan(a.startKey, a.endKey, dayKeys);
                     return s + (bar ? bar.span : 0);
                   }, 0);
                   const pct = Math.min(100, Math.round((visibleDays / NUM_DAYS) * 100));
                   const barColor = pct > 80 ? "#F85149" : pct > 60 ? "#F59E0B" : member.color;
+
+                  // Counts for strategic mode badge
+                  const jiraActiveCount = allTasks.filter(a => a.fromJira && !a.isDone).length;
 
                   return [
                     <tr key={`hdr-${member.id}`} style={{ background: "#161B22", cursor: "pointer" }} onClick={() => setExpanded(p => ({ ...p, [member.id]: !p[member.id] }))}>
@@ -348,7 +496,12 @@ export default function App() {
                           <div style={{ width: 26, height: 26, borderRadius: 7, background: `${member.color}22`, border: `1px solid ${member.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, color: member.color, flexShrink: 0 }}>{member.initials}</div>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: "#F0F6FC", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{member.name}</div>
-                            <div style={{ fontSize: 9, color: "#484F58" }}>{mTasks.length} task{mTasks.length !== 1 ? "s" : ""}</div>
+                            <div style={{ fontSize: 9, color: "#484F58" }}>
+                              {mTasks.length} task{mTasks.length !== 1 ? "s" : ""}
+                              {strategicMode && jiraActiveCount > 0 && (
+                                <span style={{ color: "#30363D", marginLeft: 4 }}>· {jiraActiveCount} Jira hidden</span>
+                              )}
+                            </div>
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
                             <span style={{ fontSize: 9, fontWeight: 700, color: barColor }}>{pct}%</span>
@@ -364,16 +517,22 @@ export default function App() {
                     isExpanded && mTasks.length === 0 && (
                       <tr key={`empty-${member.id}`}>
                         <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 12px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14" }}>
-                          <span style={{ fontSize: 10, color: "#484F58", fontStyle: "italic" }}>No tasks</span>
+                          <span style={{ fontSize: 10, color: "#484F58", fontStyle: "italic" }}>
+                            {strategicMode ? "No strategic items — click timeline to add" : "No tasks"}
+                          </span>
                         </td>
                         {DAYS.map((d, i) => <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: dateKey(d) === TODAY_KEY ? "#1A1F2E11" : "transparent", cursor: "crosshair" }} onClick={() => openAdd(member.id, dateKey(d))} />)}
                       </tr>
                     ),
 
                     isExpanded && mTasks.map(a => {
+                      const isManual = !a.fromJira;
                       const bar = a.startKey && a.endKey ? getBarSpan(a.startKey, a.endKey, dayKeys) : null;
                       const dueIdx = a.dueDateKey ? dayKeys.findIndex(k => k === a.dueDateKey) : -1;
                       const resolvedIdx = a.resolvedKey ? dayKeys.findIndex(k => k === a.resolvedKey) : -1;
+
+                      // Row height differs by type
+                      const rowHeight = isManual ? 36 : 28;
 
                       const cells = [];
                       let i = 0;
@@ -386,20 +545,51 @@ export default function App() {
                         const isDoneDay = a.isDone && resolvedIdx === i;
 
                         if (isBarStart) {
-                          cells.push(
-                            <td key={i} colSpan={bar.span} style={{ borderBottom: "1px solid #21262D", borderRight: "none", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
-                              <div onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
-                                style={{ height: 22, borderRadius: 4, background: `linear-gradient(135deg,${member.color}EE,${member.color}99)`, borderLeft: `3px solid ${member.color}`, display: "flex", alignItems: "center", padding: "0 6px", boxShadow: `0 1px 4px ${member.color}44`, overflow: "hidden", cursor: "pointer" }}>
-                                <span style={{ fontSize: 10, fontWeight: 600, color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 2px rgba(0,0,0,.5)" }}>{a.title}</span>
-                              </div>
-                            </td>
-                          );
+                          if (isManual) {
+                            // ── STRATEGIC / MANUAL BAR — prominent, full opacity ──
+                            cells.push(
+                              <td key={i} colSpan={bar.span} style={{ borderBottom: "1px solid #21262D", borderRight: "none", background: isToday ? "#1A1F2E11" : "transparent", padding: "4px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
+                                <div
+                                  onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })}
+                                  onMouseLeave={() => setTooltip(null)}
+                                  style={{
+                                    height: 28,
+                                    borderRadius: 5,
+                                    background: `linear-gradient(135deg, ${member.color}FF, ${member.color}CC)`,
+                                    borderLeft: `4px solid ${member.color}`,
+                                    display: "flex", alignItems: "center", padding: "0 8px", gap: 5,
+                                    boxShadow: `0 2px 10px ${member.color}55, inset 0 1px 0 rgba(255,255,255,0.12)`,
+                                    overflow: "hidden", cursor: "pointer",
+                                  }}
+                                >
+                                  <span style={{ fontSize: 9, color: "rgba(255,255,255,0.75)", flexShrink: 0 }}>◆</span>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: "white", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textShadow: "0 1px 3px rgba(0,0,0,.6)" }}>{a.title}</span>
+                                </div>
+                              </td>
+                            );
+                          } else {
+                            // ── JIRA BAR (if it had dates) — muted ──
+                            cells.push(
+                              <td key={i} colSpan={bar.span} style={{ borderBottom: "1px solid #21262D", borderRight: "none", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
+                                <div
+                                  onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })}
+                                  onMouseLeave={() => setTooltip(null)}
+                                  style={{ height: 22, borderRadius: 4, background: `linear-gradient(135deg,${member.color}88,${member.color}44)`, borderLeft: `2px solid ${member.color}55`, display: "flex", alignItems: "center", padding: "0 6px", overflow: "hidden", cursor: "pointer" }}
+                                >
+                                  <span style={{ fontSize: 9, fontWeight: 500, color: `${member.color}BB`, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.title}</span>
+                                </div>
+                              </td>
+                            );
+                          }
                           i += bar.span;
                         } else if (isDueDay) {
                           cells.push(
                             <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
-                              <div onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
-                                style={{ height: 22, borderRadius: 4, background: isOverdue ? "#F8514922" : `${member.color}22`, border: `1px dashed ${isOverdue ? "#F85149" : member.color}88`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <div
+                                onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })}
+                                onMouseLeave={() => setTooltip(null)}
+                                style={{ height: 22, borderRadius: 4, background: isOverdue ? "#F8514922" : `${member.color}22`, border: `1px dashed ${isOverdue ? "#F85149" : member.color}88`, display: "flex", alignItems: "center", justifyContent: "center" }}
+                              >
                                 <span style={{ fontSize: 8, fontWeight: 800, color: isOverdue ? "#F85149" : member.color }}>DUE</span>
                               </div>
                             </td>
@@ -408,8 +598,11 @@ export default function App() {
                         } else if (isDoneDay) {
                           cells.push(
                             <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
-                              <div onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
-                                style={{ height: 22, borderRadius: 4, background: `${DONE_COLOR}22`, border: `1px dashed ${DONE_COLOR}88`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                              <div
+                                onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })}
+                                onMouseLeave={() => setTooltip(null)}
+                                style={{ height: 22, borderRadius: 4, background: `${DONE_COLOR}22`, border: `1px dashed ${DONE_COLOR}88`, display: "flex", alignItems: "center", justifyContent: "center" }}
+                              >
                                 <span style={{ fontSize: 8, fontWeight: 800, color: DONE_COLOR }}>DONE</span>
                               </div>
                             </td>
@@ -426,10 +619,39 @@ export default function App() {
 
                       return (
                         <tr key={`task-${a.id}`}>
-                          <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 10px 0 28px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
+                          <td
+                            style={{
+                              borderBottom: "1px solid #21262D",
+                              borderRight: "1px solid #21262D",
+                              padding: isManual ? "0 10px 0 20px" : "0 10px 0 28px",
+                              height: rowHeight,
+                              position: "sticky", left: 0, zIndex: 10,
+                              background: isManual ? "#0F1420" : "#0D0F14",
+                              cursor: "pointer",
+                              borderLeft: isManual ? `3px solid ${member.color}55` : "none",
+                            }}
+                            onClick={e => openEdit(e, a)}
+                          >
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                              {a.fromJira && <span style={{ fontSize: 8, fontWeight: 700, background: a.isDone ? "#0D2818" : a.dueDateKey < TODAY_KEY ? "#3D1414" : "#1D3557", color: a.isDone ? DONE_COLOR : a.dueDateKey < TODAY_KEY ? "#F85149" : "#3B82F6", padding: "1px 3px", borderRadius: 3, flexShrink: 0 }}>{a.isDone ? "✓" : "J"}</span>}
-                              <span style={{ fontSize: 10, color: a.isDone ? "#484F58" : a.dueDateKey < TODAY_KEY ? "#F85149" : "#8B949E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 138, textDecoration: a.isDone ? "line-through" : "underline dotted #484F58" }}>{a.title}</span>
+                              {isManual ? (
+                                // Strategic item badge — colored diamond
+                                <span style={{ fontSize: 8, fontWeight: 700, background: `${member.color}22`, color: member.color, padding: "1px 4px", borderRadius: 3, flexShrink: 0, border: `1px solid ${member.color}44` }}>◆</span>
+                              ) : (
+                                // Jira badge — muted
+                                <span style={{ fontSize: 8, fontWeight: 700, background: a.isDone ? "#0D2818" : a.dueDateKey < TODAY_KEY ? "#3D1414" : "#1D3557", color: a.isDone ? DONE_COLOR : a.dueDateKey < TODAY_KEY ? "#F85149" : "#3B82F650", padding: "1px 3px", borderRadius: 3, flexShrink: 0 }}>{a.isDone ? "✓" : "J"}</span>
+                              )}
+                              <span style={{
+                                fontSize: isManual ? 11 : 9,
+                                fontWeight: isManual ? 600 : 400,
+                                color: isManual
+                                  ? (a.isDone ? "#484F58" : "#E2E8F0")
+                                  : (a.isDone ? "#484F58" : a.dueDateKey < TODAY_KEY ? "#F85149" : "#6B7280"),
+                                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                                maxWidth: 138,
+                                textDecoration: a.isDone ? "line-through" : isManual ? "none" : "underline dotted #484F58",
+                              }}>
+                                {a.title}
+                              </span>
                             </div>
                           </td>
                           {cells}
@@ -447,26 +669,32 @@ export default function App() {
       {tooltip && (
         <div style={{ position: "fixed", left: tooltip.x + 14, top: tooltip.y - 80, background: "#1C2128", border: "1px solid #30363D", borderRadius: 8, padding: "10px 14px", fontSize: 12, pointerEvents: "none", zIndex: 1000, boxShadow: "0 8px 32px rgba(0,0,0,.6)", minWidth: 180 }}>
           <div style={{ fontWeight: 700, color: "#F0F6FC", marginBottom: 4 }}>{tooltip.a.title}</div>
-          <div style={{ color: "#8B949E", fontSize: 11 }}>{TEAM_MEMBERS.find(m => m.id === tooltip.a.memberId)?.name}</div>
-          {tooltip.a.startKey && <div style={{ color: "#484F58", fontSize: 10, marginTop: 3 }}>{new Date(tooltip.a.startKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })} → {new Date(tooltip.a.endKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
+          {tooltip.a.memberId && <div style={{ color: "#8B949E", fontSize: 11 }}>{TEAM_MEMBERS.find(m => m.id === tooltip.a.memberId)?.name}</div>}
+          {tooltip.a.status === "Milestone" && <div style={{ color: "#F59E0B", fontSize: 10, marginTop: 2 }}>📍 Milestone</div>}
+          {tooltip.a.startKey && tooltip.a.status !== "Milestone" && <div style={{ color: "#484F58", fontSize: 10, marginTop: 3 }}>{new Date(tooltip.a.startKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })} → {new Date(tooltip.a.endKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
+          {tooltip.a.startKey && tooltip.a.status === "Milestone" && <div style={{ color: "#484F58", fontSize: 10, marginTop: 3 }}>{new Date(tooltip.a.startKey + "T12:00:00").toLocaleDateString("default", { month: "long", day: "numeric", year: "numeric" })}</div>}
           {tooltip.a.dueDateKey && !tooltip.a.isDone && <div style={{ color: "#F59E0B", fontSize: 10, marginTop: 3 }}>Due {new Date(tooltip.a.dueDateKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
           {tooltip.a.resolvedKey && tooltip.a.isDone && <div style={{ color: DONE_COLOR, fontSize: 10, marginTop: 3 }}>Resolved {new Date(tooltip.a.resolvedKey + "T12:00:00").toLocaleDateString("default", { month: "short", day: "numeric" })}</div>}
-          {tooltip.a.status && <div style={{ color: "#8B949E", fontSize: 10, marginTop: 2 }}>Status: {tooltip.a.status}</div>}
+          {tooltip.a.status && tooltip.a.status !== "Milestone" && <div style={{ color: "#8B949E", fontSize: 10, marginTop: 2 }}>Status: {tooltip.a.status}</div>}
           {tooltip.a.fromJira && tooltip.a.jiraKey && <div style={{ color: "#3B82F6", fontSize: 10, marginTop: 3 }}>↗ {tooltip.a.jiraKey} · click to open</div>}
         </div>
       )}
 
+      {/* ── ASSIGNMENT MODAL ── */}
       {showModal && (
         <div onClick={e => e.target === e.currentTarget && setShowModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, backdropFilter: "blur(4px)" }}>
           <div style={{ background: "#161B22", border: "1px solid #30363D", borderRadius: 12, padding: 24, width: 400, boxShadow: "0 24px 60px rgba(0,0,0,.7)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#F0F6FC" }}>{editItem ? "Edit Assignment" : "New Assignment"}</h2>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#F0F6FC" }}>{editItem ? "Edit Strategic Item" : "New Strategic Item"}</h2>
+                {!editItem && <p style={{ margin: "4px 0 0", fontSize: 11, color: "#484F58" }}>Manual high-level items appear as prominent bars on the timeline.</p>}
+              </div>
               <button onClick={() => setShowModal(false)} style={{ background: "none", border: "none", color: "#8B949E", cursor: "pointer", fontSize: 18 }}>✕</button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div>
                 <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Title</label>
-                <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Homepage Redesign" autoFocus style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g. Homepage Redesign Q2" autoFocus style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: "1px solid #30363D", borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
               </div>
               <div>
                 <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Assign To</label>
@@ -489,13 +717,88 @@ export default function App() {
               {form.endKey < form.startKey && <div style={{ fontSize: 11, color: "#F85149" }}>End date must be after start date.</div>}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 {editItem && <button onClick={() => del(editItem.id)} style={{ flex: 1, background: "transparent", border: "1px solid #F8514933", color: "#F85149", padding: 8, borderRadius: 6, fontSize: 12, cursor: "pointer", fontWeight: 600 }}>Delete</button>}
-                <button onClick={save} disabled={!form.fromJira && form.endKey < form.startKey} style={{ flex: 2, background: "#238636", border: "1px solid #2EA043", color: "white", padding: 8, borderRadius: 6, fontSize: 13, cursor: "pointer", fontWeight: 700 }}>{editItem ? "Save Changes" : "Add Assignment"}</button>
+                <button onClick={save} disabled={!form.fromJira && form.endKey < form.startKey} style={{ flex: 2, background: "#238636", border: "1px solid #2EA043", color: "white", padding: 8, borderRadius: 6, fontSize: 13, cursor: "pointer", fontWeight: 700 }}>{editItem ? "Save Changes" : "Add Strategic Item"}</button>
               </div>
               {editItem?.fromJira && editItem?.jiraKey && (
                 <a href={`${JIRA_BASE}/${editItem.jiraKey}`} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 4, color: "#3B82F6", fontSize: 12, textDecoration: "none", padding: 7, borderRadius: 6, border: "1px solid #1D3557", background: "#0D1117" }}>
                   <span>↗</span> View {editItem.jiraKey} in Jira
                 </a>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MILESTONE MODAL ── */}
+      {showMilestoneModal && (
+        <div onClick={e => e.target === e.currentTarget && setShowMilestoneModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, backdropFilter: "blur(4px)" }}>
+          <div style={{ background: "#161B22", border: `1px solid ${milestoneForm.color}55`, borderRadius: 12, padding: 24, width: 380, boxShadow: `0 24px 60px rgba(0,0,0,.7), 0 0 40px ${milestoneForm.color}22` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#F0F6FC", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span>🚩</span> {editMilestone ? "Edit Milestone" : "New Milestone"}
+                </h2>
+                <p style={{ margin: "4px 0 0", fontSize: 11, color: "#484F58" }}>Milestones mark key project dates across the full team timeline.</p>
+              </div>
+              <button onClick={() => setShowMilestoneModal(false)} style={{ background: "none", border: "none", color: "#8B949E", cursor: "pointer", fontSize: 18 }}>✕</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Milestone Name</label>
+                <input
+                  value={milestoneForm.title}
+                  onChange={e => setMilestoneForm(f => ({ ...f, title: e.target.value }))}
+                  placeholder="e.g. Phase 1 Complete, Q2 Launch"
+                  autoFocus
+                  style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: `1px solid ${milestoneForm.color}55`, borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Date</label>
+                <input
+                  type="date"
+                  value={milestoneForm.dateKey}
+                  onChange={e => setMilestoneForm(f => ({ ...f, dateKey: e.target.value }))}
+                  style={{ display: "block", width: "100%", marginTop: 6, background: "#0D1117", border: `1px solid ${milestoneForm.color}55`, borderRadius: 6, padding: "8px 10px", color: "#F0F6FC", fontSize: 13, outline: "none", boxSizing: "border-box", cursor: "pointer", colorScheme: "dark" }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#8B949E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Color</label>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  {MILESTONE_COLORS.map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setMilestoneForm(f => ({ ...f, color: c }))}
+                      style={{
+                        width: 28, height: 28, borderRadius: 7, background: c,
+                        border: milestoneForm.color === c ? `3px solid white` : `2px solid ${c}88`,
+                        cursor: "pointer", boxShadow: milestoneForm.color === c ? `0 0 8px ${c}` : "none",
+                        transition: "all 0.15s",
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+              {/* Preview */}
+              <div style={{ background: "#0D1117", borderRadius: 6, padding: "8px 10px", border: "1px solid #21262D" }}>
+                <div style={{ fontSize: 9, color: "#484F58", marginBottom: 6, fontWeight: 600, letterSpacing: "0.06em" }}>PREVIEW</div>
+                <div style={{ height: 34, borderRadius: 5, background: `linear-gradient(135deg, ${milestoneForm.color}33, ${milestoneForm.color}18)`, border: `2px solid ${milestoneForm.color}`, display: "flex", alignItems: "center", padding: "0 8px", gap: 5, boxShadow: `0 0 8px ${milestoneForm.color}44` }}>
+                  <span style={{ fontSize: 10 }}>🚩</span>
+                  <span style={{ fontSize: 9, fontWeight: 800, color: milestoneForm.color }}>{milestoneForm.title || "Milestone name…"}</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                {editMilestone && (
+                  <button onClick={() => delMilestone(editMilestone.id)} style={{ flex: 1, background: "transparent", border: "1px solid #F8514933", color: "#F85149", padding: 8, borderRadius: 6, fontSize: 12, cursor: "pointer", fontWeight: 600 }}>Delete</button>
+                )}
+                <button
+                  onClick={saveMilestone}
+                  disabled={!milestoneForm.title.trim()}
+                  style={{ flex: 2, background: milestoneForm.color, border: "none", color: "white", padding: 8, borderRadius: 6, fontSize: 13, cursor: milestoneForm.title.trim() ? "pointer" : "not-allowed", fontWeight: 700, opacity: milestoneForm.title.trim() ? 1 : 0.5 }}
+                >
+                  {editMilestone ? "Save Milestone" : "Add Milestone"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
