@@ -6,7 +6,7 @@ export default async function handler(req, res) {
   const headers = { Authorization: auth, Accept: "application/json" };
 
   const jql = req.query.jql
-    ? decodeURIComponent(req.query.jql)
+    ? req.query.jql
     : `project = ${JIRA_PROJECT_KEY} ORDER BY created DESC`;
 
   const url = `https://${domain}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=100&fields=summary,assignee,duedate,created,status,resolutiondate`;
