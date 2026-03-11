@@ -31,15 +31,12 @@ export default async function handler(req, res) {
           const entries = (cl.values || []).slice().reverse(); // most recent first
           for (const entry of entries) {
             for (const item of entry.items || []) {
-              if (
-                item.field === "status" &&
-                ["done", "deployed"].includes(item.toString?.toLowerCase()) ||
-                ["done", "deployed"].includes(item.to?.toLowerCase()) ||
-                ["done", "deployed"].includes(item.toValue?.toLowerCase()) ||
-                ["done", "deployed"].includes(item.toDisplayValue?.toLowerCase())
-              ) {
-                transitionDate = entry.created;
-                break;
+              if (item.field === "status") {
+                const toStr = (item.toString || item.toValue || item.toDisplayValue || item.to || "").toLowerCase();
+                if (toStr.includes("done") || toStr.includes("deployed")) {
+                  transitionDate = entry.created;
+                  break;
+                }
               }
             }
             if (transitionDate) break;
