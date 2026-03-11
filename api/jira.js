@@ -1,60 +1,27 @@
 export default async function handler(req, res) {
-  const { JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY } = process.env;
+  const { JIRA_EMAIL, JIRA_API_TOKEN } = process.env;
   const domain = process.env.VITE_JIRA_DOMAIN;
+  const key = req.query.key; // e.g. /api/jira-debug?key=WOPS-123
+
+  if (!key) return res.status(400).json({ error: "Pass ?key=WOPS-XXX" });
 
   const auth = `Basic ${Buffer.from(`${JIRA_EMAIL}:${JIRA_API_TOKEN}`).toString("base64")}`;
-  const headers = { Authorization: auth, Accept: "application/json" };
-
-  const jql = req.query.jql
-    ? `project = ${JIRA_PROJECT_KEY} AND ${req.query.jql}`
-    : `project = ${JIRA_PROJECT_KEY} ORDER BY created DESC`;
-
-  const url = `https://${domain}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=100&fields=summary,assignee,duedate,created,status,resolutiondate`;
-
-  const response = await fetch(url, { headers });
+  const response = await fetch(
+    `https://${domain}/rest/api/3/issue/${key}/changelog`,
+    { headers: { Authorization: auth, Accept: "application/json" } }
+  );
   const data = await response.json();
 
-  const isDoneQuery = req.query.jql && req.query.jql.includes("Done");
+  // Return just the status-related changelog items so it's easy to read
+  const statusChanges = (data.values || []).map(entry => ({
+    created: entry.created,
+    items: (entry.items || []).filter(i => i.field === "status").map(i => ({
+      field: i.field,
+      from: i.fromString,
+      to: i.toString,
+      toId: i.to,
+    }))
+  })).filter(e => e.items.length > 0);
 
-  if (isDoneQuery && data.issues?.length) {
-    // Fetch changelogs in parallel for done tickets to get exact transition date
-    const withDates = await Promise.all(
-      data.issues.map(async (issue) => {
-        try {
-          const clRes = await fetch(
-            `https://${domain}/rest/api/3/issue/${issue.key}/changelog`,
-            { headers }
-          );
-          const cl = await clRes.json();
-          // Find the most recent transition TO Done or Deployed
-          let transitionDate = null;
-          const entries = (cl.values || []).slice().reverse(); // most recent first
-          for (const entry of entries) {
-            for (const item of entry.items || []) {
-              if (item.field === "status") {
-                const toStr = (item.toString || item.toValue || item.toDisplayValue || item.to || "").toLowerCase();
-                if (toStr.includes("done") || toStr.includes("deployed")) {
-                  transitionDate = entry.created;
-                  break;
-                }
-              }
-            }
-            if (transitionDate) break;
-          }
-          return {
-            ...issue,
-            fields: {
-              ...issue.fields,
-              transitionDate: transitionDate || issue.fields.resolutiondate || null,
-            },
-          };
-        } catch {
-          return issue;
-        }
-      })
-    );
-    return res.status(200).json({ ...data, issues: withDates });
-  }
-
-  res.status(200).json(data);
+  res.status(200).json({ raw: data.values?.[0], statusChanges });
 }
