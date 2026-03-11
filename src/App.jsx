@@ -382,6 +382,7 @@ export default function App() {
                         const isToday = dk === TODAY_KEY;
                         const isBarStart = bar && bar.sIdx === i;
                         const isDueDay = !a.isDone && a.fromJira && dueIdx === i;
+                        const isOverdue = isDueDay && a.dueDateKey < TODAY_KEY;
                         const isDoneDay = a.isDone && resolvedIdx === i;
 
                         if (isBarStart) {
@@ -398,8 +399,8 @@ export default function App() {
                           cells.push(
                             <td key={i} style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #1A1F26", background: isToday ? "#1A1F2E11" : "transparent", padding: "3px 2px", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
                               <div onMouseEnter={e => setTooltip({ id: a.id, x: e.clientX, y: e.clientY, a })} onMouseLeave={() => setTooltip(null)}
-                                style={{ height: 22, borderRadius: 4, background: `${member.color}22`, border: `1px dashed ${member.color}88`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                <span style={{ fontSize: 8, fontWeight: 800, color: member.color }}>DUE</span>
+                                style={{ height: 22, borderRadius: 4, background: isOverdue ? "#F8514922" : `${member.color}22`, border: `1px dashed ${isOverdue ? "#F85149" : member.color}88`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                <span style={{ fontSize: 8, fontWeight: 800, color: isOverdue ? "#F85149" : member.color }}>DUE</span>
                               </div>
                             </td>
                           );
@@ -427,8 +428,8 @@ export default function App() {
                         <tr key={`task-${a.id}`}>
                           <td style={{ borderBottom: "1px solid #21262D", borderRight: "1px solid #21262D", padding: "0 10px 0 28px", height: 30, position: "sticky", left: 0, zIndex: 10, background: "#0D0F14", cursor: "pointer" }} onClick={e => openEdit(e, a)}>
                             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                              {a.fromJira && <span style={{ fontSize: 8, fontWeight: 700, background: a.isDone ? "#0D2818" : "#1D3557", color: a.isDone ? DONE_COLOR : "#3B82F6", padding: "1px 3px", borderRadius: 3, flexShrink: 0 }}>{a.isDone ? "✓" : "J"}</span>}
-                              <span style={{ fontSize: 10, color: a.isDone ? "#484F58" : "#8B949E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 138, textDecoration: a.isDone ? "line-through" : "underline dotted #484F58" }}>{a.title}</span>
+                              {a.fromJira && <span style={{ fontSize: 8, fontWeight: 700, background: a.isDone ? "#0D2818" : a.dueDateKey < TODAY_KEY ? "#3D1414" : "#1D3557", color: a.isDone ? DONE_COLOR : a.dueDateKey < TODAY_KEY ? "#F85149" : "#3B82F6", padding: "1px 3px", borderRadius: 3, flexShrink: 0 }}>{a.isDone ? "✓" : "J"}</span>}
+                              <span style={{ fontSize: 10, color: a.isDone ? "#484F58" : a.dueDateKey < TODAY_KEY ? "#F85149" : "#8B949E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 138, textDecoration: a.isDone ? "line-through" : "underline dotted #484F58" }}>{a.title}</span>
                             </div>
                           </td>
                           {cells}
