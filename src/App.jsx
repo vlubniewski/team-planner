@@ -521,55 +521,60 @@ export default function App() {
     </div>
   );
 
-  // shared reset for all mobile nav buttons — kills iOS Safari's default button inflation
-  const mBtn = {WebkitAppearance:"none",appearance:"none",border:"none",background:"none",padding:0,margin:0,cursor:"pointer",boxSizing:"border-box",fontFamily:"inherit"};
+  // nav-tap: div-based tap area — zero browser button styling possible
+  const navTap = (onClick, children, extraStyle={}) => (
+    <div onClick={onClick} role="button" tabIndex={0} onKeyDown={e=>e.key==="Enter"&&onClick()}
+      style={{display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none",WebkitTapHighlightColor:"transparent",touchAction:"manipulation",cursor:"pointer",...extraStyle}}>
+      {children}
+    </div>
+  );
 
   const TopBarMobile = (
-    <div style={{background:BRAND_NAVY,padding:"10px 14px 12px",flexShrink:0,borderRadius:"14px 14px 0 0",boxSizing:"border-box",overflow:"hidden"}}>
+    <div style={{background:BRAND_NAVY,padding:"10px 14px 10px",flexShrink:0,borderRadius:"14px 14px 0 0"}}>
 
-      {/* row 1: logo · title · save · sync */}
-      <div style={{display:"flex",alignItems:"center",gap:0,marginBottom:10}}>
+      {/* ── row 1: logo · title · sync ── */}
+      <div style={{display:"flex",alignItems:"center",marginBottom:10}}>
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" style={{flexShrink:0}}><path d="M3 3h3v6h8V3h3v14h-3v-5H6v5H3V3z" fill={BRAND_BLUE}/></svg>
         <span style={{fontSize:13,fontWeight:800,color:"#FFF",marginLeft:6}}>HMP</span>
         <span style={{fontSize:11,color:"rgba(255,255,255,0.4)",marginLeft:5}}>Team Planner</span>
         <div style={{flex:1}}/>
         <SaveStatus status={saveStatus}/>
-        <button {...{}} onClick={syncFromJira} disabled={syncing} title="Sync WOPS"
-          style={{...mBtn,width:32,height:32,background:syncing?"rgba(255,255,255,0.08)":BRAND_BLUE,borderRadius:8,color:"white",fontSize:17,display:"flex",alignItems:"center",justifyContent:"center",opacity:syncing?0.6:1,marginLeft:8,flexShrink:0}}>
-          <span style={{display:"inline-block",animation:syncing?"spin 1s linear infinite":"none",lineHeight:"1"}}>⟳</span>
-        </button>
-      </div>
-
-      {/* row 2: month nav — CSS grid so arrow widths are truly fixed */}
-      <div style={{display:"grid",gridTemplateColumns:`36px 1fr${monthOffset!==0?" 56px":""} 36px`,alignItems:"center",gap:4,marginBottom:8}}>
-        <button onClick={()=>setMonthOffset(o=>o-1)}
-          style={{...mBtn,width:36,height:36,color:"rgba(255,255,255,0.85)",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(255,255,255,0.1)",borderRadius:8,border:"1px solid rgba(255,255,255,0.15)"}}>‹</button>
-        <div style={{textAlign:"center",fontSize:13,fontWeight:700,color:"#FFF",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 2px"}}>{monthLabel}</div>
-        {monthOffset!==0&&(
-          <button onClick={()=>setMonthOffset(0)}
-            style={{...mBtn,height:36,color:"rgba(255,255,255,0.8)",fontSize:11,fontWeight:600,background:"rgba(255,255,255,0.1)",borderRadius:8,border:"1px solid rgba(255,255,255,0.18)",display:"flex",alignItems:"center",justifyContent:"center"}}>Today</button>
+        {navTap(syncFromJira,
+          <><span style={{display:"inline-block",animation:syncing?"spin 1s linear infinite":"none",fontSize:17,lineHeight:1,marginRight:4}}>⟳</span><span style={{fontSize:11,fontWeight:600}}>Sync</span></>,
+          {background:syncing?"rgba(255,255,255,0.08)":BRAND_BLUE,borderRadius:8,padding:"6px 10px",marginLeft:8,opacity:syncing?0.6:1,flexShrink:0,color:"white"}
         )}
-        <button onClick={()=>setMonthOffset(o=>o+1)}
-          style={{...mBtn,width:36,height:36,color:"rgba(255,255,255,0.85)",fontSize:22,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(255,255,255,0.1)",borderRadius:8,border:"1px solid rgba(255,255,255,0.15)"}}>›</button>
       </div>
 
-      {/* row 3: two equal toggles · stat badges */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:6,alignItems:"center"}}>
-        <button onClick={()=>setShowDone(v=>!v)}
-          style={{...mBtn,height:32,background:showDone?`${DONE_COLOR}22`:"rgba(255,255,255,0.07)",border:`1px solid ${showDone?DONE_COLOR+"55":"rgba(255,255,255,0.12)"}`,color:showDone?"#4ADE80":"rgba(255,255,255,0.4)",fontSize:11,fontWeight:600,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-          <span style={{fontSize:7,lineHeight:1}}>●</span>{showDone?"Hide Done":"Show Done"}
-        </button>
-        <button onClick={()=>setStrategicMode(v=>!v)}
-          style={{...mBtn,height:32,background:strategicMode?`${BRAND_BLUE}28`:"rgba(255,255,255,0.07)",border:`1px solid ${strategicMode?BRAND_BLUE+"66":"rgba(255,255,255,0.12)"}`,color:strategicMode?"#60A5FA":"rgba(255,255,255,0.4)",fontSize:11,fontWeight:600,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-          <span style={{fontSize:8}}>◆</span>{strategicMode?"Planned":"Ops"}
-        </button>
-        <div style={{display:"flex",gap:6}}>
-          <div style={{background:"rgba(96,165,250,0.15)",border:"1px solid rgba(96,165,250,0.3)",borderRadius:6,padding:"3px 8px",textAlign:"center"}}>
-            <div style={{fontSize:12,fontWeight:800,color:"#60A5FA",lineHeight:1.2}}>{jiraTasks}</div>
+      {/* ── row 2: ‹  Month label  › ── */}
+      <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
+        {navTap(()=>setMonthOffset(o=>o-1), <span style={{fontSize:20,lineHeight:1,color:"rgba(255,255,255,0.9)"}}>‹</span>,
+          {padding:"6px 14px",background:"rgba(255,255,255,0.1)",borderRadius:8,flexShrink:0})}
+        <div style={{flex:1,textAlign:"center",fontSize:13,fontWeight:700,color:"#FFF",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 8px"}}>{monthLabel}</div>
+        {monthOffset!==0&&navTap(()=>setMonthOffset(0),
+          <span style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.85)"}}>Today</span>,
+          {padding:"6px 10px",background:"rgba(255,255,255,0.1)",borderRadius:8,marginRight:4,flexShrink:0}
+        )}
+        {navTap(()=>setMonthOffset(o=>o+1), <span style={{fontSize:20,lineHeight:1,color:"rgba(255,255,255,0.9)"}}>›</span>,
+          {padding:"6px 14px",background:"rgba(255,255,255,0.1)",borderRadius:8,flexShrink:0})}
+      </div>
+
+      {/* ── row 3: toggles · stats ── */}
+      <div style={{display:"flex",alignItems:"center",gap:6}}>
+        {navTap(()=>setShowDone(v=>!v),
+          <><span style={{fontSize:7}}>●</span><span style={{marginLeft:4}}>{showDone?"Hide Done":"Show Done"}</span></>,
+          {flex:1,justifyContent:"center",height:30,background:showDone?`${DONE_COLOR}22`:"rgba(255,255,255,0.07)",border:`1px solid ${showDone?DONE_COLOR+"55":"rgba(255,255,255,0.12)"}`,color:showDone?"#4ADE80":"rgba(255,255,255,0.4)",fontSize:11,fontWeight:600,borderRadius:7}
+        )}
+        {navTap(()=>setStrategicMode(v=>!v),
+          <><span style={{fontSize:8}}>◆</span><span style={{marginLeft:4}}>{strategicMode?"Planned":"Ops"}</span></>,
+          {flex:1,justifyContent:"center",height:30,background:strategicMode?`${BRAND_BLUE}28`:"rgba(255,255,255,0.07)",border:`1px solid ${strategicMode?BRAND_BLUE+"66":"rgba(255,255,255,0.12)"}`,color:strategicMode?"#60A5FA":"rgba(255,255,255,0.4)",fontSize:11,fontWeight:600,borderRadius:7}
+        )}
+        <div style={{display:"flex",gap:5,flexShrink:0}}>
+          <div style={{background:"rgba(96,165,250,0.15)",border:"1px solid rgba(96,165,250,0.3)",borderRadius:6,padding:"3px 7px",textAlign:"center"}}>
+            <div style={{fontSize:12,fontWeight:800,color:"#60A5FA",lineHeight:1.3}}>{jiraTasks}</div>
             <div style={{fontSize:8,color:"rgba(255,255,255,0.35)"}}>active</div>
           </div>
-          <div style={{background:"rgba(167,139,250,0.15)",border:"1px solid rgba(167,139,250,0.3)",borderRadius:6,padding:"3px 8px",textAlign:"center"}}>
-            <div style={{fontSize:12,fontWeight:800,color:"#A78BFA",lineHeight:1.2}}>{manualTasks}</div>
+          <div style={{background:"rgba(167,139,250,0.15)",border:"1px solid rgba(167,139,250,0.3)",borderRadius:6,padding:"3px 7px",textAlign:"center"}}>
+            <div style={{fontSize:12,fontWeight:800,color:"#A78BFA",lineHeight:1.3}}>{manualTasks}</div>
             <div style={{fontSize:8,color:"rgba(255,255,255,0.35)"}}>planned</div>
           </div>
         </div>
