@@ -32,7 +32,7 @@ export default async function handler(req, res) {
           for (const entry of entries) {
             for (const item of entry.items || []) {
               if (item.field === "status") {
-                const toStr = (item.toString || item.toValue || item.toDisplayValue || item.to || "").toLowerCase();
+                const toStr = (item["toString"] || item.to || "").toLowerCase();
                 if (toStr.includes("done") || toStr.includes("deployed")) {
                   transitionDate = entry.created;
                   break;
