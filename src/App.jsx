@@ -190,13 +190,13 @@ function MobileTaskCard({a, member, onEdit}){
 function MobileMilestoneStrip({milestones, monthLabel, onAdd, onEdit}){
   const sorted = [...milestones].sort((a,b)=>a.startKey.localeCompare(b.startKey));
   return(
-    <div style={{background:"#FFFBEB",borderBottom:`1px solid #FDE68A`,padding:"8px 14px",flexShrink:0,width:"100%",boxSizing:"border-box",overflow:"hidden"}}>
+    <div style={{background:"#FFFBEB",borderBottom:`1px solid #FDE68A`,padding:"8px 14px",flexShrink:0,width:"100%",boxSizing:"border-box"}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:sorted.length?8:0}}>
         <span style={{fontSize:9,fontWeight:700,color:"#92400E",letterSpacing:"0.07em"}}>🚩 MILESTONES</span>
         <button onClick={()=>onAdd(TODAY_KEY)} style={{marginLeft:"auto",background:"none",border:"1px solid #D97706",color:"#D97706",fontSize:10,padding:"2px 8px",borderRadius:5,cursor:"pointer",fontWeight:700}}>+ Add</button>
       </div>
       {sorted.length>0&&(
-        <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:2}}>
+        <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:2,width:"100%",boxSizing:"border-box"}}>
           {sorted.map(ms=>(
             <div key={ms.id} onClick={e=>onEdit(e,ms)}
               style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,background:`${ms.jiraKey}15`,border:`1.5px solid ${ms.jiraKey}`,borderRadius:7,padding:"5px 10px",cursor:"pointer"}}>
@@ -622,6 +622,58 @@ export default function App() {
               onAdd={openAddMilestone}
               onEdit={openEditMilestone}
             />
+
+            {/* ── NEXT PRIORITIES mobile strip ── */}
+            {nextPriorities.length>0&&(
+              <div style={{borderBottom:`2px solid ${C.borderMid}`,background:C.surfaceAlt,flexShrink:0}}>
+                <div
+                  onClick={()=>setPriorityPanelOpen(v=>!v)}
+                  style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",cursor:"pointer"}}
+                >
+                  <span style={{fontSize:9,fontWeight:800,color:BRAND_NAVY,letterSpacing:"0.06em"}}>◆ NEXT PRIORITIES / UPCOMING</span>
+                  <span style={{fontSize:10,color:C.textMuted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"1px 7px",fontWeight:600}}>{nextPriorities.length}</span>
+                  <div style={{flex:1}}/>
+                  <button
+                    onClick={e=>{e.stopPropagation();openAddPriority();}}
+                    style={{background:BRAND_BLUE,border:"none",color:"white",fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:5,cursor:"pointer"}}
+                  >+ Add</button>
+                  <span style={{fontSize:12,color:C.textMuted,transition:"transform 0.2s",transform:priorityPanelOpen?"rotate(90deg)":"none",marginLeft:2}}>›</span>
+                </div>
+                {priorityPanelOpen&&(
+                  <div style={{overflowX:"auto",display:"flex",gap:8,padding:"0 14px 10px",width:"100%",boxSizing:"border-box"}}>
+                    {nextPriorities.map(item=>(
+                      <div key={item.id}
+                        onClick={()=>openEditPriority(item)}
+                        style={{flexShrink:0,width:160,borderRadius:8,background:`linear-gradient(135deg,${item.color},${item.color}CC)`,boxShadow:`0 2px 8px ${item.color}40`,cursor:"pointer",padding:"8px 10px",userSelect:"none"}}
+                      >
+                        <div style={{fontSize:11,fontWeight:700,color:"white",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginBottom:4,textShadow:"0 1px 2px rgba(0,0,0,0.25)"}}>{item.title}</div>
+                        {item.startKey?(
+                          <div style={{fontSize:9,color:"rgba(255,255,255,0.85)",background:"rgba(0,0,0,0.15)",borderRadius:4,padding:"2px 5px",display:"inline-flex",alignItems:"center",gap:2}}>
+                            📅 {fmtDate(item.startKey)}{item.endKey&&item.endKey!==item.startKey?` → ${fmtDate(item.endKey)}`:""}
+                          </div>
+                        ):(
+                          <div style={{fontSize:9,color:"rgba(255,255,255,0.9)",background:"rgba(0,0,0,0.2)",borderRadius:4,padding:"2px 5px",display:"inline-flex",alignItems:"center",gap:2,fontWeight:600}}>
+                            🔧 Needs Sizing
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {nextPriorities.length===0&&(
+              <div style={{borderBottom:`1px solid ${C.border}`,background:C.surfaceAlt,flexShrink:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px"}}>
+                  <span style={{fontSize:9,fontWeight:800,color:C.textMuted,letterSpacing:"0.06em"}}>◆ NEXT PRIORITIES / UPCOMING</span>
+                  <div style={{flex:1}}/>
+                  <button
+                    onClick={openAddPriority}
+                    style={{background:BRAND_BLUE,border:"none",color:"white",fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:5,cursor:"pointer"}}
+                  >+ Add</button>
+                </div>
+              </div>
+            )}
 
             {/* team member sections */}
             {TEAM_MEMBERS.map(member=>{
