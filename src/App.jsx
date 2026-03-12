@@ -132,6 +132,7 @@ function MobileTaskCard({a, member, onEdit}){
         padding:"10px 14px", background:bgColor,
         borderLeft, borderBottom:`1px solid ${C.border}`,
         cursor:"pointer", minHeight:isManual?52:40,
+        width:"100%", boxSizing:"border-box", overflow:"hidden",
       }}
     >
       {/* badge */}
@@ -175,7 +176,7 @@ function MobileTaskCard({a, member, onEdit}){
             </span>
           )}
           {a.fromJira && a.jiraKey && (
-            <span style={{fontSize:10,color:BRAND_BLUE,padding:"2px 0",fontWeight:500}}>{a.jiraKey}</span>
+            <span style={{fontSize:10,color:BRAND_BLUE,padding:"2px 0",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{a.jiraKey}</span>
           )}
         </div>
       </div>
@@ -189,7 +190,7 @@ function MobileTaskCard({a, member, onEdit}){
 function MobileMilestoneStrip({milestones, monthLabel, onAdd, onEdit}){
   const sorted = [...milestones].sort((a,b)=>a.startKey.localeCompare(b.startKey));
   return(
-    <div style={{background:"#FFFBEB",borderBottom:`1px solid #FDE68A`,padding:"8px 14px",flexShrink:0}}>
+    <div style={{background:"#FFFBEB",borderBottom:`1px solid #FDE68A`,padding:"8px 14px",flexShrink:0,width:"100%",boxSizing:"border-box",overflow:"hidden"}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:sorted.length?8:0}}>
         <span style={{fontSize:9,fontWeight:700,color:"#92400E",letterSpacing:"0.07em"}}>🚩 MILESTONES</span>
         <button onClick={()=>onAdd(TODAY_KEY)} style={{marginLeft:"auto",background:"none",border:"1px solid #D97706",color:"#D97706",fontSize:10,padding:"2px 8px",borderRadius:5,cursor:"pointer",fontWeight:700}}>+ Add</button>
@@ -602,8 +603,8 @@ export default function App() {
   // MOBILE LAYOUT
   // ─────────────────────────────────────────────────────────────────────────
   const MobileContent = (
-    <div style={{fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",background:C.pageBg,height:"100svh",display:"flex",flexDirection:"column",boxSizing:"border-box",padding:"10px"}}>
-      <div style={{background:C.surface,borderRadius:14,boxShadow:"0 2px 6px rgba(0,0,0,0.06),0 8px 32px rgba(0,0,0,0.09)",flex:1,display:"flex",flexDirection:"column",overflow:"hidden",border:`1px solid ${C.border}`}}>
+    <div style={{fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",background:C.pageBg,height:"100svh",width:"100%",maxWidth:"100vw",display:"flex",flexDirection:"column",boxSizing:"border-box",padding:"10px",overflowX:"hidden"}}>
+      <div style={{background:C.surface,borderRadius:14,boxShadow:"0 2px 6px rgba(0,0,0,0.06),0 8px 32px rgba(0,0,0,0.09)",flex:1,display:"flex",flexDirection:"column",overflow:"hidden",border:`1px solid ${C.border}`,minWidth:0,width:"100%"}}>
         {TopBarMobile}
         {StrategicBanner}
         {SyncBanner}
@@ -613,7 +614,7 @@ export default function App() {
             <span style={{display:"inline-block",animation:"spin 1s linear infinite",color:BRAND_BLUE}}>⟳</span> Loading…
           </div>
         ) : (
-          <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+          <div style={{flex:1,overflowY:"auto",overflowX:"hidden",WebkitOverflowScrolling:"touch",width:"100%"}}>
             {/* milestone strip */}
             <MobileMilestoneStrip
               milestones={milestones}
@@ -638,11 +639,11 @@ export default function App() {
               });
 
               return(
-                <div key={member.id} style={{borderBottom:`2px solid ${C.border}`}}>
+                <div key={member.id} style={{borderBottom:`2px solid ${C.border}`,overflow:"hidden",width:"100%"}}>
                   {/* member header */}
                   <div
                     onClick={()=>setExpanded(p=>({...p,[member.id]:!p[member.id]}))}
-                    style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:C.surfaceHdr,borderLeft:`4px solid ${member.color}`,cursor:"pointer",position:"sticky",top:0,zIndex:5}}
+                    style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:C.surfaceHdr,borderLeft:`4px solid ${member.color}`,cursor:"pointer",position:"sticky",top:0,zIndex:5,width:"100%",boxSizing:"border-box"}}
                   >
                     <div style={{width:34,height:34,borderRadius:9,background:`${member.color}18`,border:`1.5px solid ${member.color}50`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:member.color,flexShrink:0}}>{member.initials}</div>
                     <div style={{flex:1,minWidth:0}}>
@@ -1205,6 +1206,7 @@ export default function App() {
       {DayMilestonesModal}
       <style>{`
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        html,body{max-width:100vw;overflow-x:hidden;}
         *{box-sizing:border-box}
         button{-webkit-appearance:none;appearance:none;}
         ::-webkit-scrollbar{width:5px;height:5px}
