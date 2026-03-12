@@ -614,7 +614,7 @@ export default function App() {
             <span style={{display:"inline-block",animation:"spin 1s linear infinite",color:BRAND_BLUE}}>⟳</span> Loading…
           </div>
         ) : (
-          <div style={{flex:1,overflowY:"auto",overflowX:"hidden",WebkitOverflowScrolling:"touch",width:"100%"}}>
+          <div style={{flex:1,overflowY:"auto",overflowX:"hidden",width:"100%"}}>
             {/* milestone strip */}
             <MobileMilestoneStrip
               milestones={milestones}
@@ -643,7 +643,7 @@ export default function App() {
                   {/* member header */}
                   <div
                     onClick={()=>setExpanded(p=>({...p,[member.id]:!p[member.id]}))}
-                    style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:C.surfaceHdr,borderLeft:`4px solid ${member.color}`,cursor:"pointer",position:"sticky",top:0,zIndex:5,width:"100%",boxSizing:"border-box"}}
+                    style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:C.surfaceHdr,borderLeft:`4px solid ${member.color}`,cursor:"pointer",width:"100%",boxSizing:"border-box"}}
                   >
                     <div style={{width:34,height:34,borderRadius:9,background:`${member.color}18`,border:`1.5px solid ${member.color}50`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:member.color,flexShrink:0}}>{member.initials}</div>
                     <div style={{flex:1,minWidth:0}}>
