@@ -1,1273 +1,1104 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import "./App.css";
 
 const TEAM_MEMBERS = [
-  { id: 1, name: "Ryan Geraghty",   role: "Director, Software Development", color: "#4F46E5", initials: "RG" },
-  { id: 2, name: "Michael Santilli", role: "Sr. Web Developer",              color: "#1D6FE8", initials: "MS" },
-  { id: 3, name: "John Kaeser",      role: "Sr. Developer",                  color: "#059669", initials: "JK" },
-  { id: 4, name: "Jason Moore",      role: "Web Developer",                  color: "#D97706", initials: "JM" },
+  { id: 1, name: "Ryan Geraghty", role: "Director, Software Development", color: "#1d4ed8", initials: "RG" },
+  { id: 2, name: "Michael Santilli", role: "Sr. Web Developer", color: "#0f766e", initials: "MS" },
+  { id: 3, name: "John Kaeser", role: "Sr. Developer", color: "#c2410c", initials: "JK" },
+  { id: 4, name: "Jason Moore", role: "Web Developer", color: "#7c3aed", initials: "JM" },
 ];
 
-const JIRA_BASE        = "https://hmpglobal.atlassian.net/browse";
-const SIDEBAR_W        = 210;
-const TODAY            = new Date(); TODAY.setHours(0,0,0,0);
-const TODAY_KEY        = TODAY.toISOString().slice(0,10);
-const DONE_COLOR       = "#16A34A";
-const BRAND_BLUE       = "#0057B8";
-const BRAND_NAVY       = "#162040";
-const MILESTONE_COLORS = ["#D97706","#4F46E5","#DB2777","#059669","#DC2626","#0057B8"];
+const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
+const TODAY = new Date();
+TODAY.setHours(0, 0, 0, 0);
+const TODAY_KEY = dateKey(TODAY);
+const STORAGE_KEY = "nextPriorities";
+const MILESTONE_COLORS = ["#d97706", "#4f46e5", "#db2777", "#059669", "#dc2626", "#0057b8"];
 const MILESTONE_LEGEND = {
-  "#D97706": "Marketing",
-  "#4F46E5": "Learning Network",
-  "#DB2777": "LMS",
+  "#d97706": "Marketing",
+  "#4f46e5": "Learning Network",
+  "#db2777": "LMS",
   "#059669": "Psychiatry Redefined",
-  "#DC2626": "Other",
-  "#0057B8": "Other",
+  "#dc2626": "Other",
+  "#0057b8": "Operations",
 };
+const PRIORITY_COLORS = ["#1d4ed8", "#0f766e", "#c2410c", "#7c3aed", "#be185d", "#374151"];
 
-const C = {
-  pageBg:       "#EEF2F7",
-  surface:      "#FFFFFF",
-  surfaceAlt:   "#F8FAFC",
-  surfaceHdr:   "#F1F5F9",
-  border:       "#E2E8F0",
-  borderMid:    "#CBD5E1",
-  textPrimary:  "#0F172A",
-  textSecond:   "#475569",
-  textMuted:    "#94A3B8",
-  textDisabled: "#CBD5E1",
-  todayBg:      "#EFF6FF",
-  todayText:    BRAND_BLUE,
-};
+function dateKey(d) {
+  return new Date(d).toISOString().slice(0, 10);
+}
 
-// ─── helpers ────────────────────────────────────────────────────────────────
-function dateKey(d)      { return new Date(d).toISOString().slice(0,10); }
-function isWeekend(d)    { const day = new Date(d).getDay(); return day===0||day===6; }
-function addDays(d, n)   { const r = new Date(d); r.setDate(r.getDate()+n); return r; }
-function fmtDate(key)    { return new Date(key+"T12:00:00").toLocaleDateString("default",{month:"short",day:"numeric"}); }
-function fmtDateLong(key){ return new Date(key+"T12:00:00").toLocaleDateString("default",{month:"short",day:"numeric",year:"numeric"}); }
+function addDays(d, amount) {
+  const next = new Date(d);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function fmtDate(key, options = { month: "short", day: "numeric" }) {
+  return new Date(`${key}T12:00:00`).toLocaleDateString("en-US", options);
+}
+
+function fmtRange(startKey, endKey) {
+  if (!startKey) return "Needs dates";
+  if (!endKey || startKey === endKey) return fmtDate(startKey);
+  return `${fmtDate(startKey)} - ${fmtDate(endKey)}`;
+}
+
+function buildTimelineDays() {
+  const days = [];
+  const start = new Date(TODAY.getFullYear(), TODAY.getMonth(), 1);
+  const end = new Date(TODAY.getFullYear(), TODAY.getMonth() + 2, 0);
+
+  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
+    days.push(new Date(cursor));
+  }
+
+  return days;
+}
+
+function getPriorityTone(priority) {
+  if (priority >= 85) return "high";
+  if (priority >= 70) return "medium";
+  return "low";
+}
+
+function getAssignmentType(assignment) {
+  if (assignment.status === "MILESTONE") return "milestone";
+  if (assignment.fromJira) return "ops";
+  return "planned";
+}
 
 function useIsMobile() {
-  const [mobile, setMobile] = useState(() => window.innerWidth < 768);
+  const [mobile, setMobile] = useState(() => window.innerWidth < 960);
+
   useEffect(() => {
-    const h = () => setMobile(window.innerWidth < 768);
-    window.addEventListener("resize", h);
-    return () => window.removeEventListener("resize", h);
+    const onResize = () => setMobile(window.innerWidth < 960);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
+
   return mobile;
 }
 
-function buildDays(monthOffset, numMonths) {
-  const days = [];
-  const base = new Date(TODAY.getFullYear(), TODAY.getMonth() + monthOffset, 1);
-  for (let m = 0; m < numMonths; m++) {
-    const month = new Date(base.getFullYear(), base.getMonth() + m, 1);
-    const dim   = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
-    for (let d = 1; d <= dim; d++) {
-      const date = new Date(month.getFullYear(), month.getMonth(), d);
-      if (!isWeekend(date)) days.push(date);
-    }
-  }
-  return days;
-}
-function getMonthGroups(days) {
-  const groups=[]; let cur=null;
-  days.forEach((d,i)=>{
-    const key=`${d.getFullYear()}-${d.getMonth()}`;
-    const label=d.toLocaleString("default",{month:"long",year:"numeric"});
-    if(!cur||cur.key!==key){cur={key,label,start:i,count:1};groups.push(cur);}else cur.count++;
-  });
-  return groups;
-}
-function getWeekGroups(days) {
-  const groups=[]; let cur=null;
-  days.forEach((d,i)=>{
-    const jan1=new Date(d.getFullYear(),0,1);
-    const wk=Math.ceil(((d-jan1)/86400000+jan1.getDay()+1)/7);
-    const key=`${d.getFullYear()}-${wk}`;
-    if(!cur||cur.key!==key){cur={key,label:d.toLocaleDateString("default",{month:"short",day:"numeric"}),start:i,count:1};groups.push(cur);}else cur.count++;
-  });
-  return groups;
-}
-function getBarSpan(startKey, endKey, dayKeys) {
-  const sIdx=dayKeys.findIndex(k=>k>=startKey);
-  let eIdx=-1;
-  for(let i=dayKeys.length-1;i>=0;i--){if(dayKeys[i]<=endKey){eIdx=i;break;}}
-  if(sIdx===-1||eIdx===-1||eIdx<sIdx) return null;
-  return {sIdx,span:eIdx-sIdx+1};
+function SaveStatus({ status }) {
+  if (!status) return null;
+
+  const copy = {
+    saving: "Saving changes",
+    saved: "Saved",
+    error: "Save failed",
+  };
+
+  return <span className={`save-status ${status}`}>{copy[status]}</span>;
 }
 
-// ─── tiny shared components ──────────────────────────────────────────────────
-function SaveStatus({status}){
-  const s={saving:{color:C.textMuted},saved:{color:DONE_COLOR},error:{color:"#DC2626"}};
-  const l={saving:"Saving…",saved:"✓ Saved",error:"✕ Save failed"};
-  if(!status) return null;
-  return(
-    <div style={{display:"flex",alignItems:"center",gap:5,fontSize:11,...s[status]}}>
-      {status==="saving"&&<span style={{display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</span>}
-      {l[status]}
-    </div>
-  );
-}
-function Pill({label,value,color}){
-  return(
-    <div style={{display:"flex",alignItems:"center",gap:4,background:`${color}12`,border:`1px solid ${color}30`,borderRadius:20,padding:"3px 9px"}}>
-      <span style={{fontSize:13,fontWeight:700,color,lineHeight:1}}>{value}</span>
-      <span style={{fontSize:10,color:C.textSecond,fontWeight:500}}>{label}</span>
+function SummaryCard({ label, value, detail, tone = "default" }) {
+  return (
+    <div className={`summary-card ${tone}`}>
+      <span className="summary-label">{label}</span>
+      <strong>{value}</strong>
+      <span className="summary-detail">{detail}</span>
     </div>
   );
 }
 
-// ─── mobile task card ────────────────────────────────────────────────────────
-function MobileTaskCard({a, member, onEdit}){
-  const isManual   = !a.fromJira;
-  const isOverdue  = !a.isDone && a.dueDateKey && a.dueDateKey < TODAY_KEY;
-  const bgColor    = isManual ? `${member.color}08` : C.surface;
-  const borderLeft = isManual ? `3px solid ${member.color}` : `3px solid ${member.color}20`;
-
-  return(
-    <div
-      onClick={e=>onEdit(e,a)}
-      style={{
-        display:"flex", alignItems:"flex-start", gap:10,
-        padding:"10px 14px", background:bgColor,
-        borderLeft, borderBottom:`1px solid ${C.border}`,
-        cursor:"pointer", minHeight:isManual?52:40,
-        width:"100%", boxSizing:"border-box", overflow:"hidden",
-      }}
-    >
-      {/* badge */}
-      {isManual ? (
-        <span style={{fontSize:9,fontWeight:700,background:`${member.color}18`,color:member.color,padding:"2px 5px",borderRadius:4,flexShrink:0,border:`1px solid ${member.color}30`,marginTop:2}}>◆</span>
-      ):(
-        <span style={{fontSize:9,fontWeight:700,background:a.isDone?"#F0FDF4":isOverdue?"#FEF2F2":"#EFF6FF",color:a.isDone?DONE_COLOR:isOverdue?"#DC2626":"#2563EB",padding:"2px 4px",borderRadius:4,flexShrink:0,marginTop:2}}>
-          {a.isDone?"✓":"J"}
-        </span>
-      )}
-
-      {/* content */}
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{
-          fontSize:isManual?13:11, fontWeight:isManual?600:400,
-          color:isManual?(a.isDone?C.textMuted:BRAND_NAVY):(a.isDone?C.textDisabled:isOverdue?"#DC2626":C.textSecond),
-          textDecoration:a.isDone?"line-through":"none",
-          lineHeight:1.35, wordBreak:"break-word",
-        }}>{a.title}</div>
-
-        {/* date / status chips */}
-        <div style={{display:"flex",gap:6,marginTop:5,flexWrap:"wrap"}}>
-          {isManual && a.startKey && (
-            <span style={{fontSize:10,color:member.color,background:`${member.color}12`,borderRadius:4,padding:"2px 6px",fontWeight:500}}>
-              {fmtDate(a.startKey)} → {fmtDate(a.endKey)}
-            </span>
-          )}
-          {!isManual && a.dueDateKey && !a.isDone && (
-            <span style={{fontSize:10,color:isOverdue?"#DC2626":"#D97706",background:isOverdue?"#FEF2F2":"#FFFBEB",borderRadius:4,padding:"2px 6px",fontWeight:600}}>
-              {isOverdue?"Overdue · ":"Due "}{fmtDate(a.dueDateKey)}
-            </span>
-          )}
-          {a.isDone && a.resolvedKey && (
-            <span style={{fontSize:10,color:DONE_COLOR,background:"#F0FDF4",borderRadius:4,padding:"2px 6px",fontWeight:500}}>
-              Done {fmtDate(a.resolvedKey)}
-            </span>
-          )}
-          {a.status && !a.isDone && a.fromJira && (
-            <span style={{fontSize:10,color:C.textMuted,background:C.surfaceAlt,borderRadius:4,padding:"2px 6px"}}>
-              {a.status}
-            </span>
-          )}
-          {a.fromJira && a.jiraKey && (
-            <span style={{fontSize:10,color:BRAND_BLUE,padding:"2px 0",fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{a.jiraKey}</span>
-          )}
+function SectionCard({ eyebrow, title, action, children, className = "" }) {
+  return (
+    <section className={`panel ${className}`.trim()}>
+      <div className="panel-head">
+        <div>
+          {eyebrow ? <div className="eyebrow">{eyebrow}</div> : null}
+          <h2>{title}</h2>
         </div>
+        {action}
       </div>
-
-      <span style={{fontSize:16,color:C.textDisabled,flexShrink:0,marginTop:2}}>›</span>
-    </div>
-  );
-}
-
-// ─── mobile milestone strip ──────────────────────────────────────────────────
-function MobileMilestoneStrip({milestones, monthLabel, onAdd, onEdit}){
-  const sorted = [...milestones].sort((a,b)=>a.startKey.localeCompare(b.startKey));
-  return(
-    <div style={{background:"#FFFBEB",borderBottom:`1px solid #FDE68A`,padding:"8px 14px",flexShrink:0,width:"100%",boxSizing:"border-box"}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:sorted.length?8:0}}>
-        <span style={{fontSize:9,fontWeight:700,color:"#92400E",letterSpacing:"0.07em"}}>🚩 MILESTONES</span>
-        <button onClick={()=>onAdd(TODAY_KEY)} style={{marginLeft:"auto",background:"none",border:"1px solid #D97706",color:"#D97706",fontSize:10,padding:"2px 8px",borderRadius:5,cursor:"pointer",fontWeight:700}}>+ Add</button>
-      </div>
-      {sorted.length>0&&(
-        <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:2,width:"100%",boxSizing:"border-box"}}>
-          {sorted.map(ms=>(
-            <div key={ms.id} onClick={e=>onEdit(e,ms)}
-              style={{flexShrink:0,display:"flex",alignItems:"center",gap:5,background:`${ms.jiraKey}15`,border:`1.5px solid ${ms.jiraKey}`,borderRadius:7,padding:"5px 10px",cursor:"pointer"}}>
-              <span style={{fontSize:10}}>🚩</span>
-              <div>
-                <div style={{fontSize:10,fontWeight:700,color:ms.jiraKey,whiteSpace:"nowrap"}}>{ms.title}</div>
-                <div style={{fontSize:9,color:C.textMuted,marginTop:1}}>{fmtDateLong(ms.startKey)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {sorted.length===0&&(
-        <div style={{fontSize:10,color:"#92400E",opacity:0.5,fontStyle:"italic"}}>No milestones yet — tap + Add</div>
-      )}
-      <div style={{display:"flex",flexWrap:"wrap",gap:"3px 10px",marginTop:7,paddingTop:6,borderTop:"1px solid #FDE68A"}}>
-        {MILESTONE_COLORS.map(c=>(
-          <div key={c} style={{display:"flex",alignItems:"center",gap:4}}>
-            <span style={{width:8,height:8,borderRadius:"50%",background:c,display:"inline-block",flexShrink:0}}/>
-            <span style={{fontSize:9,color:"#92400E",opacity:0.8}}>{MILESTONE_LEGEND[c]}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── main app ────────────────────────────────────────────────────────────────
-export default function App() {
-  const isMobile = useIsMobile();
-
-  const [monthOffset,       setMonthOffset]       = useState(0);
-  const [assignments,       setAssignments]       = useState([]);
-  const [expanded,          setExpanded]          = useState({1:true,2:true,3:true,4:true});
-  const [showDone,          setShowDone]          = useState(true);
-  const [strategicMode,     setStrategicMode]     = useState(true);
-  const [showModal,         setShowModal]         = useState(false);
-  const [editItem,          setEditItem]          = useState(null);
-  const [form,              setForm]              = useState({title:"",memberId:1,startKey:TODAY_KEY,endKey:dateKey(addDays(TODAY,4)),fromJira:false,dueDateKey:null});
-  const [tooltip,           setTooltip]           = useState(null);
-  const [syncing,           setSyncing]           = useState(false);
-  const [syncStatus,        setSyncStatus]        = useState(null);
-  const [saveStatus,        setSaveStatus]        = useState(null);
-  const [loading,           setLoading]           = useState(true);
-  const [showMilestoneModal,setShowMilestoneModal]= useState(false);
-  const [editMilestone,     setEditMilestone]     = useState(null);
-  const [milestoneForm,     setMilestoneForm]     = useState({title:"",dateKey:TODAY_KEY,color:"#D97706"});
-  const [dayMsModal,        setDayMsModal]        = useState(null); // {dateKey, milestones[]}
-  const [nextPriorities,    setNextPriorities]    = useState(()=>{try{return JSON.parse(localStorage.getItem("nextPriorities")||"[]");}catch{return [];}});
-  const [dragPriority,      setDragPriority]      = useState(null);
-  const [dragAssignment,    setDragAssignment]    = useState(null);
-  const [showPriorityModal, setShowPriorityModal] = useState(false);
-  const [editPriority,      setEditPriority]      = useState(null);
-  const [priorityForm,      setPriorityForm]      = useState({title:"",startKey:"",endKey:"",color:"#4F46E5"});
-  const [priorityPanelOpen, setPriorityPanelOpen] = useState(true);
-
-  const gridRef   = useRef(null);
-  const nextId    = useRef(300);
-  const [colW,    setColW] = useState(0);
-  const saveTimer = useRef(null);
-
-  const DAYS        = buildDays(monthOffset, 2);
-  const NUM_DAYS    = DAYS.length;
-  const monthGroups = getMonthGroups(DAYS);
-  const weekGroups  = getWeekGroups(DAYS);
-  const dayKeys     = DAYS.map(d => dateKey(d));
-  const milestones  = assignments.filter(a => a.status === "MILESTONE");
-  const monthLabel  = monthGroups.map(g => g.label).join(" – ");
-
-  // stats
-  const jiraTasks   = assignments.filter(a => a.fromJira && !a.isDone).length;
-  const doneTasks   = assignments.filter(a => a.isDone).length;
-  const manualTasks = assignments.filter(a => !a.fromJira && a.status !== "MILESTONE").length;
-
-  // persist next priorities to localStorage
-  useEffect(()=>{
-    try{localStorage.setItem("nextPriorities",JSON.stringify(nextPriorities));}catch{}
-  },[nextPriorities]);
-
-  // column width measurement (desktop only)
-  useEffect(()=>{
-    const measure=()=>{
-      if(gridRef.current&&gridRef.current.offsetWidth>0)
-        setColW((gridRef.current.offsetWidth-SIDEBAR_W)/NUM_DAYS);
-    };
-    measure();
-    const t=setTimeout(measure,100);
-    window.addEventListener("resize",measure);
-    return()=>{clearTimeout(t);window.removeEventListener("resize",measure);};
-  },[monthOffset,loading,isMobile]);
-
-  // initial load
-  useEffect(()=>{
-    const load=async()=>{
-      setLoading(true);
-      try{
-        const res=await fetch("/api/assignments");
-        const data=await res.json();
-        let saved=[];
-        if(Array.isArray(data)){
-          saved=data.map(r=>({
-            id:r.id,title:r.title,memberId:r.member_id,
-            startKey:r.start_key,endKey:r.end_key,
-            fromJira:r.from_jira,jiraKey:r.jira_key,
-            status:r.status,dueDateKey:r.due_date_key,
-            resolvedKey:r.resolved_key,isDone:r.is_done,
-          }));
-        }
-        const [activeRes,doneRes]=await Promise.all([
-          fetch(`/api/jira?jql=${encodeURIComponent('status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC')}`),
-          fetch(`/api/jira?jql=${encodeURIComponent('status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC')}`),
-        ]);
-        const activeData=await activeRes.json();
-        const doneData=await doneRes.json();
-        const mapIssue=(issue,isDone)=>{
-          const{summary,assignee,duedate}=issue.fields;
-          const member=TEAM_MEMBERS.find(m=>assignee&&m.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase()));
-          if(!member) return null;
-          let dueDateKey=null;
-          if(duedate){const dd=new Date(duedate);dd.setHours(0,0,0,0);dueDateKey=dateKey(dd);}
-          let resolvedKey=null;
-          const rr=issue.fields.transitionDate||issue.fields.resolutiondate;
-          if(rr){const rd=new Date(rr);rd.setHours(0,0,0,0);resolvedKey=dateKey(rd);}
-          return{id:`jira-${issue.id}`,title:summary,memberId:member.id,startKey:null,endKey:null,fromJira:true,jiraKey:issue.key,status:issue.fields.status?.name,dueDateKey,resolvedKey,isDone};
-        };
-        const jiraItems=[
-          ...(activeData.issues||[]).map(i=>mapIssue(i,false)),
-          ...(doneData.issues||[]).map(i=>mapIssue(i,true)),
-        ].filter(Boolean);
-        const merged=[...saved.filter(a=>!a.fromJira),...jiraItems];
-        setAssignments(merged);
-        await fetch("/api/assignments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({assignments:merged})});
-      }catch(e){console.error("Load failed",e);}
-      setLoading(false);
-    };
-    load();
-  },[]);
-
-  const persistAssignments=useCallback(async(list)=>{
-    setSaveStatus("saving");
-    try{
-      const res=await fetch("/api/assignments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({assignments:list})});
-      if(!res.ok) throw new Error("Save failed");
-      setSaveStatus("saved");
-      setTimeout(()=>setSaveStatus(null),2000);
-    }catch{setSaveStatus("error");}
-  },[]);
-
-  const updateAssignments=useCallback((updater)=>{
-    setAssignments(prev=>{
-      const next=typeof updater==="function"?updater(prev):updater;
-      clearTimeout(saveTimer.current);
-      saveTimer.current=setTimeout(()=>persistAssignments(next),600);
-      return next;
-    });
-  },[persistAssignments]);
-
-  // assignment modal
-  const openAdd=(memberId,dk)=>{
-    setEditItem(null);
-    setForm({title:"",memberId,startKey:dk,endKey:dateKey(addDays(new Date(dk+"T12:00:00"),4)),fromJira:false,dueDateKey:null});
-    setShowModal(true);
-  };
-  const openEdit=(e,a)=>{
-    e.stopPropagation();
-    setEditItem(a);
-    setForm({title:a.title,memberId:a.memberId,startKey:a.startKey,endKey:a.endKey,fromJira:a.fromJira,dueDateKey:a.dueDateKey??null});
-    setShowModal(true);
-  };
-  const save=()=>{
-    if(!form.title.trim()||form.endKey<form.startKey) return;
-    if(editItem) updateAssignments(p=>p.map(a=>a.id===editItem.id?{...a,...form}:a));
-    else updateAssignments(p=>[...p,{id:`manual-${nextId.current++}-${Date.now()}`,...form}]);
-    setShowModal(false);
-  };
-  const del=id=>{updateAssignments(p=>p.filter(a=>a.id!==id));setShowModal(false);};
-  const cloneItem=()=>{
-    // Switch modal to "add" mode pre-filled with current form values
-    setEditItem(null);
-    setForm(f=>({...f,title:f.title+" (copy)"}));
-  };
-
-  // milestone modal
-  const openAddMilestone=(dk)=>{
-    setEditMilestone(null);
-    setMilestoneForm({title:"",dateKey:dk||TODAY_KEY,color:"#D97706"});
-    setShowMilestoneModal(true);
-  };
-  const openEditMilestone=(e,m)=>{
-    e.stopPropagation();
-    setEditMilestone(m);
-    setMilestoneForm({title:m.title,dateKey:m.startKey,color:m.jiraKey||"#D97706"});
-    setShowMilestoneModal(true);
-  };
-  const saveMilestone=()=>{
-    if(!milestoneForm.title.trim()) return;
-    const ms={id:editMilestone?editMilestone.id:`milestone-${nextId.current++}-${Date.now()}`,title:milestoneForm.title,memberId:null,startKey:milestoneForm.dateKey,endKey:milestoneForm.dateKey,fromJira:false,jiraKey:milestoneForm.color,status:"MILESTONE",dueDateKey:null,resolvedKey:null,isDone:false};
-    if(editMilestone) updateAssignments(p=>p.map(a=>a.id===editMilestone.id?ms:a));
-    else updateAssignments(p=>[...p,ms]);
-    setShowMilestoneModal(false);
-  };
-  const delMilestone=id=>{updateAssignments(p=>p.filter(a=>a.id!==id));setShowMilestoneModal(false);};
-
-  // next priorities
-  const openAddPriority=()=>{
-    setEditPriority(null);
-    setPriorityForm({title:"",startKey:"",endKey:"",color:"#4F46E5"});
-    setShowPriorityModal(true);
-  };
-  const openEditPriority=(item)=>{
-    setEditPriority(item);
-    setPriorityForm({title:item.title,startKey:item.startKey||"",endKey:item.endKey||"",color:item.color||"#4F46E5"});
-    setShowPriorityModal(true);
-  };
-  const savePriority=()=>{
-    if(!priorityForm.title.trim()) return;
-    const item={
-      id: editPriority ? editPriority.id : `priority-${Date.now()}`,
-      title: priorityForm.title.trim(),
-      startKey: priorityForm.startKey||null,
-      endKey: priorityForm.endKey||priorityForm.startKey||null,
-      color: priorityForm.color,
-    };
-    if(editPriority) setNextPriorities(p=>p.map(x=>x.id===editPriority.id?item:x));
-    else setNextPriorities(p=>[...p,item]);
-    setShowPriorityModal(false);
-  };
-  const delPriority=(id)=>{setNextPriorities(p=>p.filter(x=>x.id!==id));setShowPriorityModal(false);};
-  const dropAssignmentToPriorities=(a)=>{
-    setNextPriorities(p=>[...p,{
-      id:`priority-${Date.now()}`,
-      title:a.title,
-      startKey:a.startKey||null,
-      endKey:a.endKey||null,
-      color:TEAM_MEMBERS.find(m=>m.id===a.memberId)?.color||"#4F46E5",
-    }]);
-    updateAssignments(p=>p.filter(x=>x.id!==a.id));
-    setDragAssignment(null);
-    setPriorityPanelOpen(true);
-  };
-  const dropPriority=(memberId, dk, priority)=>{
-    const startKey = priority.startKey || dk;
-    const endKey   = priority.endKey   || (priority.startKey ? priority.startKey : dateKey(addDays(new Date(dk+"T12:00:00"),4)));
-    updateAssignments(p=>[...p,{
-      id:`manual-${nextId.current++}-${Date.now()}`,
-      title:priority.title,memberId,startKey,endKey,
-      fromJira:false,jiraKey:null,status:null,
-      dueDateKey:priority.endKey||null,resolvedKey:null,isDone:false,
-    }]);
-    setNextPriorities(p=>p.filter(x=>x.id!==priority.id));
-    setDragPriority(null);
-  };
-
-  const syncFromJira=async()=>{
-    setSyncing(true);setSyncStatus(null);
-    try{
-      const aJql=encodeURIComponent('status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC');
-      const dJql=encodeURIComponent('status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC');
-      const[aRes,dRes]=await Promise.all([fetch(`/api/jira?jql=${aJql}`),fetch(`/api/jira?jql=${dJql}`)]);
-      const aData=await aRes.json();
-      const dData=await dRes.json();
-      const mapIssue=(issue,isDone)=>{
-        const{summary,assignee,duedate,resolutiondate}=issue.fields;
-        const member=TEAM_MEMBERS.find(m=>assignee&&m.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase()));
-        if(!member) return null;
-        let dueDateKey=null;
-        if(duedate){const dd=new Date(duedate);dd.setHours(0,0,0,0);dueDateKey=dateKey(dd);}
-        let resolvedKey=null;
-        if(resolutiondate){const rd=new Date(resolutiondate);rd.setHours(0,0,0,0);resolvedKey=dateKey(rd);}
-        return{id:`jira-${issue.id}`,title:summary,memberId:member.id,startKey:null,endKey:null,fromJira:true,jiraKey:issue.key,status:issue.fields.status?.name,dueDateKey,resolvedKey,isDone:isDone||false};
-      };
-      const active=(aData.issues||[]).map(i=>mapIssue(i,false)).filter(Boolean);
-      const done=(dData.issues||[]).map(i=>mapIssue(i,true)).filter(Boolean);
-      updateAssignments(p=>[...p.filter(a=>!a.fromJira),...active,...done]);
-      setSyncStatus({type:"success",message:`Synced ${active.length} active + ${done.length} completed from WOPS`});
-    }catch(err){setSyncStatus({type:"error",message:`Sync failed: ${err.message}`});}
-    setSyncing(false);
-  };
-
-  // shared modal styles
-  const inputStyle={display:"block",width:"100%",marginTop:5,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:7,padding:"9px 11px",color:C.textPrimary,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
-  const labelStyle={fontSize:11,color:C.textSecond,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"};
-
-  // ── shared top-bar buttons ─────────────────────────────────────────────────
-  const TopBarDesktop = (
-    <div style={{background:BRAND_NAVY,padding:"0 20px",display:"flex",alignItems:"center",height:52,flexShrink:0,gap:10,borderRadius:"14px 14px 0 0"}}>
-      {/* wordmark */}
-      <div style={{display:"flex",alignItems:"center",gap:8,marginRight:20}}>
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 3h3v6h8V3h3v14h-3v-5H6v5H3V3z" fill={BRAND_BLUE}/></svg>
-        <span style={{fontSize:13,fontWeight:800,color:"#FFFFFF",letterSpacing:"-0.3px"}}>HMP</span>
-        <span style={{fontSize:13,fontWeight:400,color:"rgba(255,255,255,0.6)"}}>Global</span>
-        <span style={{width:1,height:16,background:"rgba(255,255,255,0.2)",margin:"0 6px"}}/>
-        <span style={{fontSize:12,fontWeight:600,color:"rgba(255,255,255,0.5)"}}>Team Planner</span>
-      </div>
-      {/* date nav */}
-      <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",borderRadius:8,padding:"3px 6px"}}>
-        <button onClick={()=>setMonthOffset(o=>o-1)} style={{background:"none",border:"none",color:"rgba(255,255,255,0.6)",cursor:"pointer",fontSize:15,padding:"1px 5px",lineHeight:1}}>‹</button>
-        <span style={{fontSize:12,fontWeight:600,color:"#FFF",minWidth:170,textAlign:"center"}}>{monthLabel}</span>
-        <button onClick={()=>setMonthOffset(o=>o+1)} style={{background:"none",border:"none",color:"rgba(255,255,255,0.6)",cursor:"pointer",fontSize:15,padding:"1px 5px",lineHeight:1}}>›</button>
-      </div>
-      {monthOffset!==0&&<button onClick={()=>setMonthOffset(0)} style={{background:"rgba(255,255,255,0.1)",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.7)",fontSize:11,padding:"3px 9px",borderRadius:6,cursor:"pointer"}}>Today</button>}
-      <button onClick={()=>setShowDone(v=>!v)} style={{background:showDone?`${DONE_COLOR}20`:"rgba(255,255,255,0.08)",border:`1px solid ${showDone?DONE_COLOR+"50":"rgba(255,255,255,0.15)"}`,color:showDone?"#4ADE80":"rgba(255,255,255,0.4)",fontSize:11,padding:"3px 10px",borderRadius:6,cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontWeight:600,transition:"all 0.15s"}}>
-        ● {showDone?"Hide Done":"Show Done"}
-      </button>
-      <button onClick={()=>setStrategicMode(v=>!v)} style={{background:strategicMode?`${BRAND_BLUE}30`:"rgba(255,255,255,0.08)",border:`1px solid ${strategicMode?BRAND_BLUE+"80":"rgba(255,255,255,0.15)"}`,color:strategicMode?"#60A5FA":"rgba(255,255,255,0.4)",fontSize:11,padding:"3px 10px",borderRadius:6,cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontWeight:600,transition:"all 0.15s"}}>
-        <span style={{fontSize:9}}>◆</span>{strategicMode?"Planned Project Items":"Operational Items"}
-      </button>
-      <div style={{flex:1}}/>
-      <SaveStatus status={saveStatus}/>
-      <div style={{display:"flex",gap:6,alignItems:"center",marginRight:12}}>
-        <Pill label="Active"  value={jiraTasks}   color="#60A5FA"/>
-        <Pill label="Done"    value={doneTasks}    color="#4ADE80"/>
-        <Pill label="Planned" value={manualTasks}  color="#A78BFA"/>
-      </div>
-      <button onClick={syncFromJira} disabled={syncing} style={{background:syncing?"rgba(255,255,255,0.08)":BRAND_BLUE,border:`1px solid ${syncing?"rgba(255,255,255,0.15)":"#1D6FE8"}`,color:"white",padding:"6px 14px",borderRadius:7,fontSize:11,fontWeight:600,cursor:syncing?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:6,opacity:syncing?0.7:1}}>
-        <span style={{display:"inline-block",animation:syncing?"spin 1s linear infinite":"none"}}>⟳</span>
-        {syncing?"Syncing…":"Sync WOPS"}
-      </button>
-      <button onClick={()=>openAddMilestone(TODAY_KEY)} style={{background:"rgba(255,255,255,0.08)",border:"1px solid rgba(217,119,6,0.5)",color:"#FCD34D",padding:"6px 12px",borderRadius:7,fontSize:11,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>🚩 Milestone</button>
-      <button onClick={()=>openAdd(1,TODAY_KEY)} style={{background:DONE_COLOR,border:"none",color:"white",padding:"6px 14px",borderRadius:7,fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
-        <span style={{fontSize:15,lineHeight:1}}>+</span> Add
-      </button>
-    </div>
-  );
-
-  // nav-tap: div-based tap area — zero browser button styling possible
-  const navTap = (onClick, children, extraStyle={}) => (
-    <div onClick={onClick} role="button" tabIndex={0} onKeyDown={e=>e.key==="Enter"&&onClick()}
-      style={{display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none",WebkitTapHighlightColor:"transparent",touchAction:"manipulation",cursor:"pointer",...extraStyle}}>
       {children}
-    </div>
+    </section>
   );
+}
 
-  const TopBarMobile = (
-    <div style={{background:BRAND_NAVY,padding:"10px 14px 10px",flexShrink:0,borderRadius:"14px 14px 0 0"}}>
-
-      {/* ── row 1: logo · title · sync ── */}
-      <div style={{display:"flex",alignItems:"center",marginBottom:10}}>
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" style={{flexShrink:0}}><path d="M3 3h3v6h8V3h3v14h-3v-5H6v5H3V3z" fill={BRAND_BLUE}/></svg>
-        <span style={{fontSize:13,fontWeight:800,color:"#FFF",marginLeft:6}}>HMP</span>
-        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)",marginLeft:5}}>Team Planner</span>
-        <div style={{flex:1}}/>
-        <SaveStatus status={saveStatus}/>
-        {navTap(syncFromJira,
-          <><span style={{display:"inline-block",animation:syncing?"spin 1s linear infinite":"none",fontSize:17,lineHeight:1,marginRight:4}}>⟳</span><span style={{fontSize:11,fontWeight:600}}>Sync</span></>,
-          {background:syncing?"rgba(255,255,255,0.08)":BRAND_BLUE,borderRadius:8,padding:"6px 10px",marginLeft:8,opacity:syncing?0.6:1,flexShrink:0,color:"white"}
-        )}
-      </div>
-
-      {/* ── row 2: ‹  Month label  › ── */}
-      <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
-        {navTap(()=>setMonthOffset(o=>o-1), <span style={{fontSize:20,lineHeight:1,color:"rgba(255,255,255,0.9)"}}>‹</span>,
-          {padding:"6px 14px",background:"rgba(255,255,255,0.1)",borderRadius:8,flexShrink:0})}
-        <div style={{flex:1,textAlign:"center",fontSize:13,fontWeight:700,color:"#FFF",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",padding:"0 8px"}}>{monthLabel}</div>
-        {monthOffset!==0&&navTap(()=>setMonthOffset(0),
-          <span style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.85)"}}>Today</span>,
-          {padding:"6px 10px",background:"rgba(255,255,255,0.1)",borderRadius:8,marginRight:4,flexShrink:0}
-        )}
-        {navTap(()=>setMonthOffset(o=>o+1), <span style={{fontSize:20,lineHeight:1,color:"rgba(255,255,255,0.9)"}}>›</span>,
-          {padding:"6px 14px",background:"rgba(255,255,255,0.1)",borderRadius:8,flexShrink:0})}
-      </div>
-
-      {/* ── row 3: toggles · stats ── */}
-      <div style={{display:"flex",alignItems:"center",gap:6}}>
-        {navTap(()=>setShowDone(v=>!v),
-          <><span style={{fontSize:7}}>●</span><span style={{marginLeft:4}}>{showDone?"Hide Done":"Show Done"}</span></>,
-          {flex:1,justifyContent:"center",height:30,background:showDone?`${DONE_COLOR}22`:"rgba(255,255,255,0.07)",border:`1px solid ${showDone?DONE_COLOR+"55":"rgba(255,255,255,0.12)"}`,color:showDone?"#4ADE80":"rgba(255,255,255,0.4)",fontSize:11,fontWeight:600,borderRadius:7}
-        )}
-        {navTap(()=>setStrategicMode(v=>!v),
-          <><span style={{fontSize:8}}>◆</span><span style={{marginLeft:4}}>{strategicMode?"Planned":"Ops"}</span></>,
-          {flex:1,justifyContent:"center",height:30,background:strategicMode?`${BRAND_BLUE}28`:"rgba(255,255,255,0.07)",border:`1px solid ${strategicMode?BRAND_BLUE+"66":"rgba(255,255,255,0.12)"}`,color:strategicMode?"#60A5FA":"rgba(255,255,255,0.4)",fontSize:11,fontWeight:600,borderRadius:7}
-        )}
-        <div style={{display:"flex",gap:5,flexShrink:0}}>
-          <div style={{background:"rgba(96,165,250,0.15)",border:"1px solid rgba(96,165,250,0.3)",borderRadius:6,padding:"3px 7px",textAlign:"center"}}>
-            <div style={{fontSize:12,fontWeight:800,color:"#60A5FA",lineHeight:1.3}}>{jiraTasks}</div>
-            <div style={{fontSize:8,color:"rgba(255,255,255,0.35)"}}>active</div>
-          </div>
-          <div style={{background:"rgba(167,139,250,0.15)",border:"1px solid rgba(167,139,250,0.3)",borderRadius:6,padding:"3px 7px",textAlign:"center"}}>
-            <div style={{fontSize:12,fontWeight:800,color:"#A78BFA",lineHeight:1.3}}>{manualTasks}</div>
-            <div style={{fontSize:8,color:"rgba(255,255,255,0.35)"}}>planned</div>
-          </div>
-        </div>
-      </div>
-    </div>
+function PriorityPill({ item, onClick }) {
+  return (
+    <button className="priority-pill" onClick={() => onClick(item)} style={{ "--pill-accent": item.color }}>
+      <span className="priority-pill-title">{item.title}</span>
+      <span className="priority-pill-meta">
+        {item.startKey ? fmtRange(item.startKey, item.endKey) : "Needs sizing"}
+      </span>
+    </button>
   );
+}
 
-  // ── STRATEGIC BANNER ──────────────────────────────────────────────────────
-  const StrategicBanner = strategicMode && (
-    <div style={{background:"#EFF6FF",borderBottom:"1px solid #BFDBFE",padding:"5px 16px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-      <span style={{fontSize:10,color:BRAND_BLUE,fontWeight:700,letterSpacing:"0.07em"}}>◆ PLANNED PROJECT ITEMS</span>
-      {!isMobile&&<span style={{fontSize:10,color:C.textSecond}}>— Operational Jira tickets hidden.</span>}
-      <button onClick={()=>setStrategicMode(false)} style={{marginLeft:"auto",background:"none",border:"1px solid #BFDBFE",color:C.textSecond,cursor:"pointer",fontSize:10,padding:"2px 8px",borderRadius:5,fontWeight:500}}>Show Operational ✕</button>
-    </div>
-  );
-
-  const SyncBanner = syncStatus && (
-    <div style={{background:syncStatus.type==="success"?"#F0FDF4":"#FEF2F2",borderBottom:`1px solid ${syncStatus.type==="success"?"#BBF7D0":"#FECACA"}`,padding:"6px 16px",fontSize:12,color:syncStatus.type==="success"?"#16A34A":"#DC2626",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-      <span>{syncStatus.message}</span>
-      <button onClick={()=>setSyncStatus(null)} style={{background:"none",border:"none",color:"inherit",cursor:"pointer",fontSize:14}}>✕</button>
-    </div>
-  );
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // MOBILE LAYOUT
-  // ─────────────────────────────────────────────────────────────────────────
-  const MobileContent = (
-    <div style={{fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",background:C.pageBg,height:"100svh",width:"100%",maxWidth:"100vw",display:"flex",flexDirection:"column",boxSizing:"border-box",padding:"10px",overflowX:"hidden"}}>
-      <div style={{background:C.surface,borderRadius:14,boxShadow:"0 2px 6px rgba(0,0,0,0.06),0 8px 32px rgba(0,0,0,0.09)",flex:1,display:"flex",flexDirection:"column",overflow:"hidden",border:`1px solid ${C.border}`,minWidth:0,width:"100%"}}>
-        {TopBarMobile}
-        {StrategicBanner}
-        {SyncBanner}
-
-        {loading ? (
-          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.textMuted,fontSize:13,gap:8}}>
-            <span style={{display:"inline-block",animation:"spin 1s linear infinite",color:BRAND_BLUE}}>⟳</span> Loading…
-          </div>
-        ) : (
-          <div style={{flex:1,overflowY:"auto",overflowX:"hidden",width:"100%"}}>
-            {/* milestone strip */}
-            <MobileMilestoneStrip
-              milestones={milestones}
-              monthLabel={monthLabel}
-              onAdd={openAddMilestone}
-              onEdit={openEditMilestone}
-            />
-
-            {/* ── NEXT PRIORITIES mobile strip ── */}
-            {nextPriorities.length>0&&(
-              <div style={{borderBottom:`2px solid ${C.borderMid}`,background:C.surfaceAlt,flexShrink:0}}>
-                <div
-                  onClick={()=>setPriorityPanelOpen(v=>!v)}
-                  style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",cursor:"pointer"}}
-                >
-                  <span style={{fontSize:9,fontWeight:800,color:BRAND_NAVY,letterSpacing:"0.06em"}}>◆ NEXT PRIORITIES / UPCOMING</span>
-                  <span style={{fontSize:10,color:C.textMuted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"1px 7px",fontWeight:600}}>{nextPriorities.length}</span>
-                  <div style={{flex:1}}/>
-                  <button
-                    onClick={e=>{e.stopPropagation();openAddPriority();}}
-                    style={{background:BRAND_BLUE,border:"none",color:"white",fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:5,cursor:"pointer"}}
-                  >+ Add</button>
-                  <span style={{fontSize:12,color:C.textMuted,transition:"transform 0.2s",transform:priorityPanelOpen?"rotate(90deg)":"none",marginLeft:2}}>›</span>
-                </div>
-                {priorityPanelOpen&&(
-                  <div style={{overflowX:"auto",display:"flex",gap:8,padding:"0 14px 10px",width:"100%",boxSizing:"border-box"}}>
-                    {nextPriorities.map(item=>(
-                      <div key={item.id}
-                        onClick={()=>openEditPriority(item)}
-                        style={{flexShrink:0,width:160,borderRadius:8,background:`linear-gradient(135deg,${item.color},${item.color}CC)`,boxShadow:`0 2px 8px ${item.color}40`,cursor:"pointer",padding:"8px 10px",userSelect:"none"}}
-                      >
-                        <div style={{fontSize:11,fontWeight:700,color:"white",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginBottom:4,textShadow:"0 1px 2px rgba(0,0,0,0.25)"}}>{item.title}</div>
-                        {item.startKey?(
-                          <div style={{fontSize:9,color:"rgba(255,255,255,0.85)",background:"rgba(0,0,0,0.15)",borderRadius:4,padding:"2px 5px",display:"inline-flex",alignItems:"center",gap:2}}>
-                            📅 {fmtDate(item.startKey)}{item.endKey&&item.endKey!==item.startKey?` → ${fmtDate(item.endKey)}`:""}
-                          </div>
-                        ):(
-                          <div style={{fontSize:9,color:"rgba(255,255,255,0.9)",background:"rgba(0,0,0,0.2)",borderRadius:4,padding:"2px 5px",display:"inline-flex",alignItems:"center",gap:2,fontWeight:600}}>
-                            🔧 Needs Sizing
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            {nextPriorities.length===0&&(
-              <div style={{borderBottom:`1px solid ${C.border}`,background:C.surfaceAlt,flexShrink:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px"}}>
-                  <span style={{fontSize:9,fontWeight:800,color:C.textMuted,letterSpacing:"0.06em"}}>◆ NEXT PRIORITIES / UPCOMING</span>
-                  <div style={{flex:1}}/>
-                  <button
-                    onClick={openAddPriority}
-                    style={{background:BRAND_BLUE,border:"none",color:"white",fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:5,cursor:"pointer"}}
-                  >+ Add</button>
-                </div>
-              </div>
-            )}
-
-            {/* team member sections */}
-            {TEAM_MEMBERS.map(member=>{
-              const allTasks = assignments.filter(a=>a.memberId===member.id);
-              const filtered  = allTasks.filter(a=>showDone?true:!a.isDone);
-              const tasks     = strategicMode ? filtered.filter(a=>!a.fromJira) : filtered;
-              const jiraCount = allTasks.filter(a=>a.fromJira&&!a.isDone).length;
-              const isExp     = expanded[member.id];
-
-              // sort: planned items first, then by due date
-              const sorted=[...tasks].sort((a,b)=>{
-                if(!a.fromJira&&b.fromJira) return -1;
-                if(a.fromJira&&!b.fromJira) return 1;
-                return 0;
-              });
-
-              return(
-                <div key={member.id} style={{borderBottom:`2px solid ${C.border}`,overflow:"hidden",width:"100%"}}>
-                  {/* member header */}
-                  <div
-                    onClick={()=>setExpanded(p=>({...p,[member.id]:!p[member.id]}))}
-                    style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background:C.surfaceHdr,borderLeft:`4px solid ${member.color}`,cursor:"pointer",width:"100%",boxSizing:"border-box"}}
-                  >
-                    <div style={{width:34,height:34,borderRadius:9,background:`${member.color}18`,border:`1.5px solid ${member.color}50`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:member.color,flexShrink:0}}>{member.initials}</div>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:13,fontWeight:700,color:BRAND_NAVY}}>{member.name}</div>
-                      <div style={{fontSize:10,color:C.textMuted,marginTop:1}}>
-                        {tasks.length} task{tasks.length!==1?"s":""}
-                        {strategicMode&&jiraCount>0&&<span style={{color:C.textDisabled,marginLeft:4}}>· {jiraCount} Jira hidden</span>}
-                      </div>
-                    </div>
-                    <span style={{fontSize:18,color:C.textMuted,transition:"transform 0.2s",transform:isExp?"rotate(90deg)":"none"}}>›</span>
-                  </div>
-
-                  {/* tasks */}
-                  {isExp&&(
-                    sorted.length===0 ? (
-                      <div style={{padding:"12px 14px",fontSize:11,color:C.textMuted,fontStyle:"italic",background:C.surface}}>
-                        {strategicMode?"No planned project items — tap + Add below":"No tasks"}
-                      </div>
-                    ) : (
-                      sorted.map(a=>(
-                        <MobileTaskCard key={a.id} a={a} member={member} onEdit={openEdit}/>
-                      ))
-                    )
-                  )}
-                </div>
-              );
-            })}
-            {/* bottom padding so FABs don't cover last item */}
-            <div style={{height:80}}/>
-          </div>
-        )}
-      </div>
-
-      {/* FABs */}
-      <div style={{position:"fixed",bottom:24,right:20,display:"flex",flexDirection:"column",gap:10,zIndex:50}}>
-        <button onClick={()=>openAddMilestone(TODAY_KEY)} style={{width:46,height:46,borderRadius:"50%",background:BRAND_NAVY,border:"2px solid rgba(217,119,6,0.6)",color:"#FCD34D",fontSize:18,cursor:"pointer",boxShadow:"0 4px 16px rgba(0,0,0,0.2)",display:"flex",alignItems:"center",justifyContent:"center"}}>🚩</button>
-        <button onClick={()=>openAdd(1,TODAY_KEY)} style={{width:52,height:52,borderRadius:"50%",background:DONE_COLOR,border:"none",color:"white",fontSize:24,fontWeight:700,cursor:"pointer",boxShadow:"0 4px 20px rgba(22,163,74,0.4)",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>+</button>
-      </div>
-    </div>
-  );
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // DESKTOP LAYOUT
-  // ─────────────────────────────────────────────────────────────────────────
-  const DesktopContent = (
-    <div style={{fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",background:C.pageBg,height:"100vh",padding:"14px",display:"flex",flexDirection:"column",boxSizing:"border-box"}}>
-      <div style={{background:C.surface,borderRadius:14,boxShadow:"0 2px 6px rgba(0,0,0,0.06),0 8px 32px rgba(0,0,0,0.09)",flex:1,display:"flex",flexDirection:"column",overflow:"hidden",border:`1px solid ${C.border}`}}>
-        {TopBarDesktop}
-        {StrategicBanner}
-        {SyncBanner}
-
-        {loading?(
-          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.textMuted,fontSize:13,gap:8}}>
-            <span style={{display:"inline-block",animation:"spin 1s linear infinite",color:BRAND_BLUE}}>⟳</span> Loading…
-          </div>
-        ):(
-          <div ref={gridRef} style={{flex:1,overflow:"auto"}}>
-            {colW>0&&(
-              <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
-                <colgroup>
-                  <col style={{width:SIDEBAR_W}}/>
-                  {DAYS.map((_,i)=><col key={i} style={{width:colW}}/>)}
-                </colgroup>
-                <thead>
-                  <tr style={{background:C.surfaceHdr}}>
-                    <th style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,padding:"5px 14px",textAlign:"left",fontSize:10,fontWeight:700,color:C.textMuted,letterSpacing:"0.07em",position:"sticky",top:0,zIndex:20,background:C.surfaceHdr}}>TEAM</th>
-                    {monthGroups.map(g=><th key={g.key} colSpan={g.count} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,padding:"5px 10px",textAlign:"left",fontSize:10,fontWeight:700,color:BRAND_NAVY,letterSpacing:"0.05em",position:"sticky",top:0,zIndex:19,background:C.surfaceHdr}}>{g.label.toUpperCase()}</th>)}
-                  </tr>
-                  <tr>
-                    <th style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,position:"sticky",top:27,zIndex:20,background:C.surfaceHdr}}/>
-                    {weekGroups.map(g=><th key={g.key} colSpan={g.count} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,padding:"3px 5px",textAlign:"left",fontSize:9,fontWeight:600,color:C.textMuted,background:C.surfaceHdr,position:"sticky",top:27,zIndex:19}}>{g.label}</th>)}
-                  </tr>
-                  <tr>
-                    <th style={{borderBottom:`2px solid ${C.borderMid}`,borderRight:`1px solid ${C.border}`,position:"sticky",top:50,zIndex:20,background:C.surface}}/>
-                    {DAYS.map((d,i)=>{
-                      const isToday=dateKey(d)===TODAY_KEY;
-                      const msOnDay=milestones.filter(m=>m.startKey===dateKey(d));
-                      return(
-                        <th key={i} style={{borderBottom:`2px solid ${C.borderMid}`,borderRight:`1px solid ${C.border}`,padding:"2px 0",textAlign:"center",fontSize:9,color:isToday?BRAND_BLUE:C.textMuted,fontWeight:isToday?800:400,background:msOnDay.length>0?`${msOnDay[0].jiraKey}18`:isToday?C.todayBg:C.surface,position:"sticky",top:50,zIndex:19}}>
-                          {isToday?"•":d.getDate()}
-                          {msOnDay.length>0&&<div style={{fontSize:7,color:msOnDay[0].jiraKey,marginTop:1}}>◆</div>}
-                        </th>
-                      );
-                    })}
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* milestones row */}
-                  <tr key="milestones-row">
-                    <td style={{borderBottom:`2px solid ${C.borderMid}`,borderRight:`1px solid ${C.border}`,padding:"0 10px 0 14px",height:44,position:"sticky",left:0,zIndex:10,background:"#FFFBEB"}}>
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
-                        <div style={{display:"flex",alignItems:"center",gap:6}}>
-                          <span style={{fontSize:10}}>🚩</span>
-                          <span style={{fontSize:9,fontWeight:700,color:"#92400E",letterSpacing:"0.07em"}}>MILESTONES</span>
-                        </div>
-                        <button onClick={()=>openAddMilestone(TODAY_KEY)} style={{background:"none",border:"1px solid #D97706",color:"#D97706",fontSize:9,padding:"2px 6px",borderRadius:4,cursor:"pointer",fontWeight:700}}>+</button>
-                      </div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:"3px 6px"}}>
-                        {MILESTONE_COLORS.map(c=>(
-                          <div key={c} style={{display:"flex",alignItems:"center",gap:3}}>
-                            <span style={{width:7,height:7,borderRadius:"50%",background:c,display:"inline-block",flexShrink:0}}/>
-                            <span style={{fontSize:8,color:"#92400E",opacity:0.75,whiteSpace:"nowrap"}}>{MILESTONE_LEGEND[c]}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </td>
-                    {DAYS.map((d,i)=>{
-                      const dk=dayKeys[i];
-                      const isToday=dk===TODAY_KEY;
-                      const msOnDay=milestones.filter(m=>m.startKey===dk);
-                      return(
-                        <td key={i} style={{borderBottom:`2px solid ${C.borderMid}`,borderRight:`1px solid ${C.border}`,background:msOnDay.length>0?`${msOnDay[0].jiraKey}12`:"#FFFBEB",padding:"3px 1px",cursor:msOnDay.length===0?"crosshair":"default",verticalAlign:"middle"}}
-                          onClick={()=>msOnDay.length===0&&openAddMilestone(dk)}>
-                          {msOnDay.length===1&&(()=>{
-                            const ms=msOnDay[0];
-                            return(
-                              <div onClick={e=>openEditMilestone(e,ms)}
-                                onMouseEnter={e=>setTooltip({id:ms.id,x:e.clientX,y:e.clientY,a:{title:ms.title,startKey:ms.startKey,status:"Milestone",fromJira:false}})}
-                                onMouseLeave={()=>setTooltip(null)}
-                                style={{height:34,borderRadius:5,background:`linear-gradient(135deg,${ms.jiraKey}22,${ms.jiraKey}10)`,border:`1.5px solid ${ms.jiraKey}`,display:"flex",alignItems:"center",padding:"0 6px",gap:4,cursor:"pointer",boxShadow:`0 1px 4px ${ms.jiraKey}33`,margin:"0 1px"}}>
-                                <span style={{fontSize:9}}>🚩</span>
-                                <span style={{fontSize:8,fontWeight:800,color:ms.jiraKey,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ms.title}</span>
-                              </div>
-                            );
-                          })()}
-                          {msOnDay.length>1&&(
-                            <div onClick={e=>{e.stopPropagation();setDayMsModal({dateKey:dk,milestones:msOnDay});}}
-                              style={{margin:"0 1px",height:34,borderRadius:5,background:"#FFFBEB",border:`1.5px dashed ${C.borderMid}`,display:"flex",alignItems:"center",justifyContent:"center",gap:3,cursor:"pointer"}}>
-                              {msOnDay.slice(0,3).map(ms=>(
-                                <span key={ms.id} style={{width:10,height:10,borderRadius:"50%",background:ms.jiraKey,flexShrink:0,border:`1.5px solid white`,boxShadow:`0 0 0 1px ${ms.jiraKey}60`}}/>
-                              ))}
-                              <span style={{fontSize:8,fontWeight:700,color:C.textSecond,marginLeft:2}}>{msOnDay.length}</span>
-                            </div>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-
-                  {/* team members */}
-                  {TEAM_MEMBERS.map(member=>{
-                    const allTasks=assignments.filter(a=>a.memberId===member.id);
-                    const filtered=allTasks.filter(a=>showDone?true:!a.isDone);
-                    const mTasks=strategicMode?filtered.filter(a=>!a.fromJira):filtered;
-                    const isExpanded=expanded[member.id];
-                    const jiraActiveCount=allTasks.filter(a=>a.fromJira&&!a.isDone).length;
-                    const visibleDays=allTasks.filter(a=>a.startKey&&a.endKey).reduce((s,a)=>{
-                      const bar=getBarSpan(a.startKey,a.endKey,dayKeys);
-                      return s+(bar?bar.span:0);
-                    },0);
-                    const pct=Math.min(100,Math.round((visibleDays/NUM_DAYS)*100));
-                    const barColor=pct>80?"#DC2626":pct>60?"#D97706":member.color;
-
-                    return[
-                      <tr key={`hdr-${member.id}`} style={{cursor:dragPriority?"copy":"pointer",background:dragPriority?`${dragPriority.color}0A`:C.surfaceHdr,transition:"background 0.1s"}} onClick={()=>!dragPriority&&setExpanded(p=>({...p,[member.id]:!p[member.id]}))} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragPriority)dropPriority(member.id,TODAY_KEY,dragPriority);}}>
-                        <td style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,borderLeft:`3px solid ${member.color}`,padding:"0 10px",height:46,position:"sticky",left:0,zIndex:10,background:dragPriority?`${dragPriority.color}0A`:C.surfaceHdr,transition:"background 0.1s"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8}}>
-                            <span style={{fontSize:9,color:C.textMuted,userSelect:"none",width:10}}>{isExpanded?"▾":"▸"}</span>
-                            <div style={{width:28,height:28,borderRadius:8,background:`${member.color}18`,border:`1.5px solid ${member.color}50`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:member.color,flexShrink:0}}>{member.initials}</div>
-                            <div style={{minWidth:0,flex:1}}>
-                              <div style={{fontSize:12,fontWeight:700,color:BRAND_NAVY,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{member.name}</div>
-                              <div style={{fontSize:9,color:C.textMuted,marginTop:1}}>
-                                {mTasks.length} task{mTasks.length!==1?"s":""}
-                                {strategicMode&&jiraActiveCount>0&&<span style={{color:C.textDisabled,marginLeft:4}}>· {jiraActiveCount} Jira hidden</span>}
-                              </div>
-                            </div>
-                            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3}}>
-                              <span style={{fontSize:9,fontWeight:700,color:barColor}}>{pct}%</span>
-                              <div style={{width:38,height:3,background:C.border,borderRadius:2}}>
-                                <div style={{height:"100%",width:`${pct}%`,background:barColor,borderRadius:2}}/>
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        {DAYS.map((d,i)=><td key={i} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,background:dateKey(d)===TODAY_KEY?C.todayBg:C.surfaceHdr}}/>)}
-                      </tr>,
-
-                      isExpanded&&mTasks.length===0&&(
-                        <tr key={`empty-${member.id}`}>
-                          <td style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,borderLeft:`3px solid ${member.color}20`,padding:"0 14px 0 26px",height:32,position:"sticky",left:0,zIndex:10,background:C.surface}}>
-                            <span style={{fontSize:10,color:C.textMuted,fontStyle:"italic"}}>{strategicMode?"No planned project items — click timeline to add":"No tasks"}</span>
-                          </td>
-                          {DAYS.map((d,i)=><td key={i} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,background:dateKey(d)===TODAY_KEY?C.todayBg:C.surface,cursor:"crosshair"}} onClick={()=>openAdd(member.id,dateKey(d))}/>)}
-                        </tr>
-                      ),
-
-                      isExpanded&&mTasks.map(a=>{
-                        const isManual=!a.fromJira;
-                        const bar=a.startKey&&a.endKey?getBarSpan(a.startKey,a.endKey,dayKeys):null;
-                        const dueIdx=a.dueDateKey?dayKeys.findIndex(k=>k===a.dueDateKey):-1;
-                        const resolvedIdx=a.resolvedKey?dayKeys.findIndex(k=>k===a.resolvedKey):-1;
-                        const rowH=isManual?36:26;
-                        const cells=[]; let i=0;
-                        while(i<NUM_DAYS){
-                          const dk=dayKeys[i];
-                          const isToday=dk===TODAY_KEY;
-                          const isBarStart=bar&&bar.sIdx===i;
-                          const isDueDay=!a.isDone&&a.fromJira&&dueIdx===i;
-                          const isOverdue=isDueDay&&a.dueDateKey<TODAY_KEY;
-                          const isDoneDay=a.isDone&&resolvedIdx===i;
-                          if(isBarStart){
-                            if(isManual){
-                              cells.push(<td key={i} colSpan={bar.span} draggable onDragStart={e=>{setDragAssignment(a);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDragAssignment(null)} style={{borderBottom:`1px solid ${C.border}`,borderRight:"none",background:isToday?C.todayBg:C.surface,padding:"4px 2px",cursor:"grab",opacity:dragAssignment?.id===a.id?0.4:1,transition:"opacity 0.15s"}} onClick={e=>openEdit(e,a)}>
-                                <div onMouseEnter={e=>setTooltip({id:a.id,x:e.clientX,y:e.clientY,a})} onMouseLeave={()=>setTooltip(null)}
-                                  style={{height:26,borderRadius:5,background:`linear-gradient(135deg,${member.color},${member.color}CC)`,borderLeft:`4px solid ${member.color}DD`,display:"flex",alignItems:"center",padding:"0 8px",gap:5,boxShadow:`0 2px 8px ${member.color}40`,overflow:"hidden",cursor:"grab"}}>
-                                  <span style={{fontSize:9,color:"rgba(255,255,255,0.8)",flexShrink:0}}>◆</span>
-                                  <span style={{fontSize:11,fontWeight:700,color:"white",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textShadow:"0 1px 2px rgba(0,0,0,0.3)"}}>{a.title}</span>
-                                </div>
-                              </td>);
-                            }else{
-                              cells.push(<td key={i} colSpan={bar.span} style={{borderBottom:`1px solid ${C.border}`,borderRight:"none",background:isToday?C.todayBg:C.surface,padding:"3px 2px",cursor:"pointer"}} onClick={e=>openEdit(e,a)}>
-                                <div onMouseEnter={e=>setTooltip({id:a.id,x:e.clientX,y:e.clientY,a})} onMouseLeave={()=>setTooltip(null)}
-                                  style={{height:20,borderRadius:4,background:`${member.color}18`,borderLeft:`2px solid ${member.color}60`,display:"flex",alignItems:"center",padding:"0 6px",overflow:"hidden"}}>
-                                  <span style={{fontSize:9,fontWeight:500,color:member.color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{a.title}</span>
-                                </div>
-                              </td>);
-                            }
-                            i+=bar.span;
-                          }else if(isDueDay){
-                            cells.push(<td key={i} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,background:isToday?C.todayBg:C.surface,padding:"3px 2px",cursor:"pointer"}} onClick={e=>openEdit(e,a)}>
-                              <div onMouseEnter={e=>setTooltip({id:a.id,x:e.clientX,y:e.clientY,a})} onMouseLeave={()=>setTooltip(null)}
-                                style={{height:20,borderRadius:4,background:isOverdue?"#FEF2F2":`${member.color}10`,border:`1px dashed ${isOverdue?"#DC2626":member.color}70`,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                <span style={{fontSize:8,fontWeight:800,color:isOverdue?"#DC2626":member.color}}>DUE</span>
-                              </div>
-                            </td>);
-                            i++;
-                          }else if(isDoneDay){
-                            cells.push(<td key={i} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,background:isToday?C.todayBg:C.surface,padding:"3px 2px",cursor:"pointer"}} onClick={e=>openEdit(e,a)}>
-                              <div onMouseEnter={e=>setTooltip({id:a.id,x:e.clientX,y:e.clientY,a})} onMouseLeave={()=>setTooltip(null)}
-                                style={{height:20,borderRadius:4,background:"#F0FDF4",border:`1px dashed ${DONE_COLOR}60`,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                                <span style={{fontSize:8,fontWeight:800,color:DONE_COLOR}}>DONE</span>
-                              </div>
-                            </td>);
-                            i++;
-                          }else{
-                            if(bar&&i>bar.sIdx&&i<bar.sIdx+bar.span){i++;continue;}
-                            cells.push(<td key={i} style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,background:dragPriority?`${dragPriority.color}08`:isToday?C.todayBg:C.surface,cursor:dragPriority?"copy":"crosshair",transition:"background 0.1s"}} onClick={()=>openAdd(member.id,dk)} onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(dragPriority)dropPriority(member.id,dk,dragPriority);}}/>);
-                            i++;
-                          }
-                        }
-                        return(
-                          <tr key={`task-${a.id}`}>
-                            <td style={{borderBottom:`1px solid ${C.border}`,borderRight:`1px solid ${C.border}`,borderLeft:isManual?`3px solid ${member.color}`:`3px solid ${member.color}20`,padding:isManual?"0 10px 0 18px":"0 10px 0 22px",height:rowH,position:"sticky",left:0,zIndex:10,background:isManual?`${member.color}06`:C.surface,cursor:"pointer"}} onClick={e=>openEdit(e,a)}>
-                              <div style={{display:"flex",alignItems:"center",gap:5}}>
-                                {isManual?(
-                                  <span style={{fontSize:8,fontWeight:700,background:`${member.color}18`,color:member.color,padding:"1px 4px",borderRadius:3,flexShrink:0,border:`1px solid ${member.color}30`}}>◆</span>
-                                ):(
-                                  <span style={{fontSize:8,fontWeight:600,background:a.isDone?"#F0FDF4":a.dueDateKey<TODAY_KEY?"#FEF2F2":"#EFF6FF",color:a.isDone?DONE_COLOR:a.dueDateKey<TODAY_KEY?"#DC2626":"#2563EB",padding:"1px 3px",borderRadius:3,flexShrink:0}}>{a.isDone?"✓":"J"}</span>
-                                )}
-                                <span style={{fontSize:isManual?11:9,fontWeight:isManual?600:400,color:isManual?(a.isDone?C.textMuted:BRAND_NAVY):(a.isDone?C.textDisabled:a.dueDateKey<TODAY_KEY?"#DC2626":C.textMuted),whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:140,textDecoration:a.isDone?"line-through":"none"}}>{a.title}</span>
-                              </div>
-                            </td>
-                            {cells}
-                          </tr>
-                        );
-                      })
-                    ];
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* ── NEXT PRIORITIES / UPCOMING PANEL ────────────────────────────── */}
-      {!loading&&(
-        <div
-          onDragOver={e=>{if(dragAssignment)e.preventDefault();}}
-          onDrop={e=>{e.preventDefault();if(dragAssignment)dropAssignmentToPriorities(dragAssignment);}}
-          style={{flexShrink:0,borderTop:`2px solid ${dragAssignment?"#4F46E5":C.borderMid}`,background:dragAssignment?"#EEF2FF":C.surfaceAlt,display:"flex",flexDirection:"column",maxHeight: priorityPanelOpen ? 220 : 42, transition:"max-height 0.2s ease, background 0.15s, border-color 0.15s",overflow:"hidden"}}>
-          {/* panel header */}
-          <div style={{display:"flex",alignItems:"center",gap:8,height:42,padding:"0 14px",flexShrink:0,borderBottom:priorityPanelOpen?`1px solid ${C.border}`:"none",background:"transparent"}}>
-            <button onClick={()=>setPriorityPanelOpen(v=>!v)} style={{background:"none",border:"none",cursor:"pointer",color:C.textMuted,fontSize:11,padding:"2px 4px",lineHeight:1,transform:priorityPanelOpen?"rotate(0deg)":"rotate(-90deg)",transition:"transform 0.2s"}}>▼</button>
-            <span style={{fontSize:10,fontWeight:800,color:BRAND_NAVY,letterSpacing:"0.06em"}}>NEXT PRIORITIES / UPCOMING</span>
-            {nextPriorities.length>0&&<span style={{fontSize:10,color:C.textMuted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"1px 7px",fontWeight:600}}>{nextPriorities.length}</span>}
-            {priorityPanelOpen&&<span style={{fontSize:10,color:dragAssignment?"#4F46E5":C.textMuted,marginLeft:4,fontWeight:dragAssignment?700:400,transition:"color 0.15s"}}>{dragAssignment?"⬇ Drop here to send back to priorities":"— Drag items onto the calendar to assign · drag calendar items here to unassign"}</span>}
-            <div style={{flex:1}}/>
-            {priorityPanelOpen&&(
-              <button onClick={openAddPriority} style={{background:BRAND_BLUE,border:"none",color:"white",fontSize:11,fontWeight:700,padding:"5px 12px",borderRadius:6,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
-                <span style={{fontSize:14,lineHeight:1}}>+</span> Add Item
-              </button>
-            )}
-          </div>
-          {/* panel body */}
-          {priorityPanelOpen&&(
-            <div style={{flex:1,overflowX:"auto",overflowY:"hidden",display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",minHeight:0}}>
-              {nextPriorities.length===0?(
-                <div style={{display:"flex",alignItems:"center",justifyContent:"center",width:"100%",color:C.textMuted,fontSize:12,fontStyle:"italic",gap:8}}>
-                  <span style={{fontSize:16}}>📋</span> No upcoming items yet — click <strong style={{color:BRAND_BLUE,fontStyle:"normal",marginLeft:3}}>+ Add Item</strong> to create your next priorities
-                </div>
-              ):(
-                nextPriorities.map(item=>(
-                  <div key={item.id}
-                    draggable
-                    onDragStart={e=>{setDragPriority(item);e.dataTransfer.effectAllowed="move";}}
-                    onDragEnd={()=>setDragPriority(null)}
-                    onClick={()=>openEditPriority(item)}
-                    style={{flexShrink:0,width:200,borderRadius:8,background:`linear-gradient(135deg,${item.color},${item.color}CC)`,borderLeft:`4px solid ${item.color}DD`,boxShadow:`0 2px 10px ${item.color}40`,cursor:"grab",padding:"8px 10px",userSelect:"none",opacity:dragPriority?.id===item.id?0.5:1,transition:"opacity 0.15s,transform 0.1s",position:"relative"}}
-                    onMouseEnter={e=>{if(!dragPriority)e.currentTarget.style.transform="translateY(-2px)";}}
-                    onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";}}
-                  >
-                    <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:4}}>
-                      <span style={{fontSize:9,color:"rgba(255,255,255,0.8)"}}>◆</span>
-                      <span style={{fontSize:11,fontWeight:700,color:"white",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1,textShadow:"0 1px 2px rgba(0,0,0,0.25)"}}>{item.title}</span>
-                      <span style={{fontSize:9,color:"rgba(255,255,255,0.5)",cursor:"pointer"}}>⣿</span>
-                    </div>
-                    {item.startKey?(
-                      <div style={{fontSize:9,color:"rgba(255,255,255,0.75)",background:"rgba(0,0,0,0.12)",borderRadius:4,padding:"2px 5px",display:"inline-flex",alignItems:"center",gap:3}}>
-                        📅 {fmtDate(item.startKey)}{item.endKey&&item.endKey!==item.startKey?` → ${fmtDate(item.endKey)}`:""}
-                      </div>
-                    ):(
-                      <div style={{fontSize:9,color:"rgba(255,255,255,0.85)",background:"rgba(0,0,0,0.18)",borderRadius:4,padding:"2px 6px",display:"inline-flex",alignItems:"center",gap:3,fontWeight:600}}>
-                        🔧 Needs Developer Sizing
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* desktop tooltip */}
-      {tooltip&&(
-        <div style={{position:"fixed",left:tooltip.x+14,top:tooltip.y-80,background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 14px",fontSize:12,pointerEvents:"none",zIndex:1000,boxShadow:"0 8px 32px rgba(0,0,0,0.15)",minWidth:180}}>
-          <div style={{fontWeight:700,color:BRAND_NAVY,marginBottom:4}}>{tooltip.a.title}</div>
-          {tooltip.a.memberId&&<div style={{color:C.textSecond,fontSize:11}}>{TEAM_MEMBERS.find(m=>m.id===tooltip.a.memberId)?.name}</div>}
-          {tooltip.a.status==="Milestone"&&<div style={{color:"#D97706",fontSize:10,marginTop:2}}>📍 Milestone</div>}
-          {tooltip.a.startKey&&tooltip.a.status!=="Milestone"&&<div style={{color:C.textMuted,fontSize:10,marginTop:3}}>{fmtDate(tooltip.a.startKey)} → {fmtDate(tooltip.a.endKey)}</div>}
-          {tooltip.a.startKey&&tooltip.a.status==="Milestone"&&<div style={{color:C.textMuted,fontSize:10,marginTop:3}}>{fmtDateLong(tooltip.a.startKey)}</div>}
-          {tooltip.a.dueDateKey&&!tooltip.a.isDone&&<div style={{color:"#D97706",fontSize:10,marginTop:3}}>Due {fmtDate(tooltip.a.dueDateKey)}</div>}
-          {tooltip.a.resolvedKey&&tooltip.a.isDone&&<div style={{color:DONE_COLOR,fontSize:10,marginTop:3}}>Resolved {fmtDate(tooltip.a.resolvedKey)}</div>}
-          {tooltip.a.status&&tooltip.a.status!=="Milestone"&&<div style={{color:C.textMuted,fontSize:10,marginTop:2}}>Status: {tooltip.a.status}</div>}
-          {tooltip.a.fromJira&&tooltip.a.jiraKey&&<div style={{color:BRAND_BLUE,fontSize:10,marginTop:3}}>↗ {tooltip.a.jiraKey} · click to open</div>}
-        </div>
-      )}
-    </div>
-  );
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // SHARED MODALS
-  // ─────────────────────────────────────────────────────────────────────────
-  const modalOverlay = { position:"fixed",inset:0,background:"rgba(15,23,42,0.55)",display:"flex",alignItems:isMobile?"flex-end":"center",justifyContent:"center",zIndex:200,backdropFilter:"blur(4px)" };
-  const modalCard    = { background:C.surface,border:`1px solid ${C.border}`,borderRadius:isMobile?"14px 14px 0 0":"14px",padding:isMobile?"20px 20px 32px":"26px",width:isMobile?"100%":"420px",boxShadow:"0 24px 60px rgba(0,0,0,0.2)",boxSizing:"border-box",maxHeight:isMobile?"95svh":"auto",overflowY:"auto" };
-
-  const AssignmentModal = showModal&&(
-    <div onClick={e=>e.target===e.currentTarget&&setShowModal(false)} style={modalOverlay}>
-      <div style={modalCard}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
-          <div>
-            <h2 style={{margin:0,fontSize:16,fontWeight:700,color:BRAND_NAVY}}>
-              {editItem?"Edit Planned Project Item":form.title.endsWith(" (copy)")?"Clone Planned Project Item":"New Planned Project Item"}
-            </h2>
-            {!editItem&&<p style={{margin:"4px 0 0",fontSize:11,color:C.textMuted}}>
-              {form.title.endsWith(" (copy)")?"Edit the details below, then save to create a duplicate.":"Appears as a prominent bar on the team timeline."}
-            </p>}
-          </div>
-          <button onClick={()=>setShowModal(false)} style={{background:"none",border:"none",color:C.textMuted,cursor:"pointer",fontSize:22,lineHeight:1,marginTop:-2,padding:"0 4px"}}>✕</button>
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <div>
-            <label style={labelStyle}>Title</label>
-            <input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Homepage Redesign Q2" autoFocus style={inputStyle}/>
+function TeamLoadCard({ member, metrics, onAddPlanned }) {
+  return (
+    <div className="team-card">
+      <div className="team-card-head">
+        <div className="person-lockup">
+          <div className="avatar" style={{ "--avatar-accent": member.color }}>
+            {member.initials}
           </div>
           <div>
-            <label style={labelStyle}>Assign To</label>
-            <select value={form.memberId} onChange={e=>setForm(f=>({...f,memberId:Number(e.target.value)}))} style={{...inputStyle,cursor:"pointer"}}>
-              {TEAM_MEMBERS.map(m=><option key={m.id} value={m.id}>{m.name} — {m.role}</option>)}
-            </select>
-          </div>
-          {!form.fromJira&&(
-            <div style={{display:"flex",gap:10}}>
-              <div style={{flex:1}}>
-                <label style={labelStyle}>Start Date</label>
-                <input type="date" value={form.startKey} onChange={e=>setForm(f=>({...f,startKey:e.target.value}))} style={{...inputStyle,cursor:"pointer",colorScheme:"light"}}/>
-              </div>
-              <div style={{flex:1}}>
-                <label style={labelStyle}>End Date</label>
-                <input type="date" value={form.endKey} min={form.startKey} onChange={e=>setForm(f=>({...f,endKey:e.target.value}))} style={{...inputStyle,cursor:"pointer",colorScheme:"light"}}/>
-              </div>
-            </div>
-          )}
-          {form.endKey<form.startKey&&<div style={{fontSize:11,color:"#DC2626"}}>End date must be after start date.</div>}
-          <div style={{display:"flex",gap:8,marginTop:4}}>
-            {editItem&&<button onClick={()=>del(editItem.id)} style={{flex:1,background:"#FEF2F2",border:"1px solid #FECACA",color:"#DC2626",padding:10,borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:600}}>Delete</button>}
-            {editItem&&!editItem.fromJira&&(
-              <button onClick={cloneItem} title="Duplicate this item" style={{flex:1,background:C.surfaceAlt,border:`1px solid ${C.border}`,color:C.textSecond,padding:10,borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:600,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                <span style={{fontSize:14}}>⧉</span> Clone
-              </button>
-            )}
-            <button onClick={save} disabled={!form.fromJira&&form.endKey<form.startKey} style={{flex:2,background:BRAND_NAVY,border:"none",color:"white",padding:10,borderRadius:8,fontSize:14,cursor:"pointer",fontWeight:700}}>
-              {editItem?"Save Changes":"Add Planned Project Item"}
-            </button>
-          </div>
-          {editItem?.fromJira&&editItem?.jiraKey&&(
-            <a href={`${JIRA_BASE}/${editItem.jiraKey}`} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginTop:4,color:BRAND_BLUE,fontSize:13,textDecoration:"none",padding:9,borderRadius:8,border:`1px solid ${C.border}`,background:C.surfaceAlt}}>
-              ↗ View {editItem.jiraKey} in Jira
-            </a>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-
-  const MilestoneModal = showMilestoneModal&&(
-    <div onClick={e=>e.target===e.currentTarget&&setShowMilestoneModal(false)} style={modalOverlay}>
-      <div style={{...modalCard,border:`1px solid ${milestoneForm.color}40`}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
-          <div>
-            <h2 style={{margin:0,fontSize:16,fontWeight:700,color:BRAND_NAVY,display:"flex",alignItems:"center",gap:8}}>🚩 {editMilestone?"Edit Milestone":"New Milestone"}</h2>
-            <p style={{margin:"4px 0 0",fontSize:11,color:C.textMuted}}>Marks a key project date across the full team timeline.</p>
-          </div>
-          <button onClick={()=>setShowMilestoneModal(false)} style={{background:"none",border:"none",color:C.textMuted,cursor:"pointer",fontSize:22,lineHeight:1,marginTop:-2,padding:"0 4px"}}>✕</button>
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <div>
-            <label style={labelStyle}>Milestone Name</label>
-            <input value={milestoneForm.title} onChange={e=>setMilestoneForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Phase 1 Complete, Q2 Launch" autoFocus style={{...inputStyle,borderColor:milestoneForm.color+"50"}}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Date</label>
-            <input type="date" value={milestoneForm.dateKey} onChange={e=>setMilestoneForm(f=>({...f,dateKey:e.target.value}))} style={{...inputStyle,borderColor:milestoneForm.color+"50",cursor:"pointer",colorScheme:"light"}}/>
-          </div>
-          <div>
-            <label style={labelStyle}>Color / Category</label>
-            <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
-              {MILESTONE_COLORS.map(c=>(
-                <div key={c} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"pointer"}} onClick={()=>setMilestoneForm(f=>({...f,color:c}))}>
-                  <div style={{width:32,height:32,borderRadius:8,background:c,border:milestoneForm.color===c?`3px solid ${BRAND_NAVY}`:`2px solid ${c}40`,boxShadow:milestoneForm.color===c?`0 0 0 2px white,0 0 0 4px ${c}`:"none",transition:"all 0.15s"}}/>
-                  <span style={{fontSize:8,color:milestoneForm.color===c?c:C.textMuted,fontWeight:milestoneForm.color===c?700:400,whiteSpace:"nowrap",transition:"all 0.15s"}}>{MILESTONE_LEGEND[c]}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div style={{background:C.surfaceAlt,borderRadius:7,padding:"10px 12px",border:`1px solid ${C.border}`}}>
-            <div style={{fontSize:9,color:C.textMuted,marginBottom:6,fontWeight:600,letterSpacing:"0.06em"}}>PREVIEW</div>
-            <div style={{height:36,borderRadius:5,background:`${milestoneForm.color}15`,border:`1.5px solid ${milestoneForm.color}`,display:"flex",alignItems:"center",padding:"0 8px",gap:5,boxShadow:`0 1px 4px ${milestoneForm.color}30`}}>
-              <span style={{fontSize:12}}>🚩</span>
-              <span style={{fontSize:11,fontWeight:800,color:milestoneForm.color}}>{milestoneForm.title||"Milestone name…"}</span>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8,marginTop:4}}>
-            {editMilestone&&<button onClick={()=>delMilestone(editMilestone.id)} style={{flex:1,background:"#FEF2F2",border:"1px solid #FECACA",color:"#DC2626",padding:10,borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:600}}>Delete</button>}
-            <button onClick={saveMilestone} disabled={!milestoneForm.title.trim()} style={{flex:2,background:milestoneForm.color,border:"none",color:"white",padding:10,borderRadius:8,fontSize:14,cursor:milestoneForm.title.trim()?"pointer":"not-allowed",fontWeight:700,opacity:milestoneForm.title.trim()?1:0.5}}>
-              {editMilestone?"Save Milestone":"Add Milestone"}
-            </button>
+            <strong>{member.name}</strong>
+            <span>{member.role}</span>
           </div>
         </div>
-      </div>
-    </div>
-  );
-
-  const PRIORITY_COLORS = ["#4F46E5","#1D6FE8","#059669","#D97706","#DB2777","#DC2626","#0F172A","#0057B8"];
-
-  const PriorityModal = showPriorityModal && (
-    <div onClick={()=>setShowPriorityModal(false)} style={modalOverlay}>
-      <div onClick={e=>e.stopPropagation()} style={modalCard}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-          <div>
-            <div style={{fontSize:10,fontWeight:700,color:C.textMuted,letterSpacing:"0.07em",marginBottom:3}}>NEXT PRIORITIES / UPCOMING</div>
-            <div style={{fontSize:16,fontWeight:800,color:BRAND_NAVY}}>{editPriority?"Edit Item":"New Priority Item"}</div>
-          </div>
-          <button onClick={()=>setShowPriorityModal(false)} style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,color:C.textMuted,width:30,height:30,borderRadius:8,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-        </div>
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <div>
-            <label style={labelStyle}>Item Title</label>
-            <input value={priorityForm.title} onChange={e=>setPriorityForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Redesign Homepage, API Migration" autoFocus style={inputStyle}/>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            <div>
-              <label style={labelStyle}>Start Date <span style={{color:C.textMuted,fontWeight:400}}>(optional)</span></label>
-              <input type="date" value={priorityForm.startKey} onChange={e=>setPriorityForm(f=>({...f,startKey:e.target.value}))} style={{...inputStyle,cursor:"pointer",colorScheme:"light"}}/>
-            </div>
-            <div>
-              <label style={labelStyle}>End Date <span style={{color:C.textMuted,fontWeight:400}}>(optional)</span></label>
-              <input type="date" value={priorityForm.endKey} min={priorityForm.startKey} onChange={e=>setPriorityForm(f=>({...f,endKey:e.target.value}))} style={{...inputStyle,cursor:"pointer",colorScheme:"light"}} disabled={!priorityForm.startKey}/>
-            </div>
-          </div>
-          {!priorityForm.startKey&&(
-            <div style={{display:"flex",alignItems:"center",gap:6,background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:7,padding:"8px 12px"}}>
-              <span style={{fontSize:14}}>🔧</span>
-              <span style={{fontSize:11,color:"#92400E",fontWeight:600}}>No dates set — will show as "Needs Developer Sizing"</span>
-            </div>
-          )}
-          <div>
-            <label style={labelStyle}>Color Tag</label>
-            <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
-              {PRIORITY_COLORS.map(c=>(
-                <button key={c} onClick={()=>setPriorityForm(f=>({...f,color:c}))} style={{width:28,height:28,borderRadius:7,background:c,border:priorityForm.color===c?`3px solid ${BRAND_NAVY}`:`2px solid ${c}40`,cursor:"pointer",boxShadow:priorityForm.color===c?`0 0 0 2px white,0 0 0 4px ${c}`:"none",transition:"all 0.15s"}}/>
-              ))}
-            </div>
-          </div>
-          {/* preview */}
-          <div style={{borderRadius:8,background:`linear-gradient(135deg,${priorityForm.color},${priorityForm.color}CC)`,padding:"10px 14px",borderLeft:`4px solid ${priorityForm.color}DD`,boxShadow:`0 2px 10px ${priorityForm.color}30`}}>
-            <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
-              <span style={{fontSize:9,color:"rgba(255,255,255,0.8)"}}>◆</span>
-              <span style={{fontSize:12,fontWeight:700,color:"white",textShadow:"0 1px 2px rgba(0,0,0,0.2)"}}>{priorityForm.title||"Item preview…"}</span>
-            </div>
-            {priorityForm.startKey?(
-              <span style={{fontSize:9,color:"rgba(255,255,255,0.8)",background:"rgba(0,0,0,0.12)",borderRadius:4,padding:"2px 5px"}}>📅 {fmtDate(priorityForm.startKey)}{priorityForm.endKey&&priorityForm.endKey!==priorityForm.startKey?` → ${fmtDate(priorityForm.endKey)}`:""}</span>
-            ):(
-              <span style={{fontSize:9,color:"rgba(255,255,255,0.85)",background:"rgba(0,0,0,0.18)",borderRadius:4,padding:"2px 6px",fontWeight:600}}>🔧 Needs Developer Sizing</span>
-            )}
-          </div>
-          <div style={{display:"flex",gap:8,marginTop:4}}>
-            {editPriority&&<button onClick={()=>delPriority(editPriority.id)} style={{flex:1,background:"#FEF2F2",border:"1px solid #FECACA",color:"#DC2626",padding:10,borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:600}}>Delete</button>}
-            <button onClick={savePriority} disabled={!priorityForm.title.trim()} style={{flex:2,background:priorityForm.color,border:"none",color:"white",padding:10,borderRadius:8,fontSize:14,cursor:priorityForm.title.trim()?"pointer":"not-allowed",fontWeight:700,opacity:priorityForm.title.trim()?1:0.5}}>
-              {editPriority?"Save Item":"Add to Priorities"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const DayMilestonesModal = dayMsModal && (
-    <div onClick={()=>setDayMsModal(null)} style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.45)",backdropFilter:"blur(3px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:2000,padding:20}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:16,boxShadow:"0 24px 60px rgba(0,0,0,0.22)",width:"100%",maxWidth:360,padding:24}}>
-        {/* header */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18}}>
-          <div>
-            <div style={{fontSize:11,fontWeight:700,color:C.textMuted,letterSpacing:"0.07em",marginBottom:3}}>🚩 MILESTONES</div>
-            <div style={{fontSize:16,fontWeight:800,color:BRAND_NAVY}}>{fmtDateLong(dayMsModal.dateKey)}</div>
-          </div>
-          <button onClick={()=>setDayMsModal(null)} style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,color:C.textMuted,width:30,height:30,borderRadius:8,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
-        </div>
-        {/* milestone list */}
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {dayMsModal.milestones.map(ms=>(
-            <div key={ms.id} onClick={()=>{setDayMsModal(null);openEditMilestone({stopPropagation:()=>{}},ms);}}
-              style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",borderRadius:10,background:`${ms.jiraKey}10`,border:`1.5px solid ${ms.jiraKey}40`,cursor:"pointer",transition:"background 0.12s"}}
-              onMouseEnter={e=>e.currentTarget.style.background=`${ms.jiraKey}20`}
-              onMouseLeave={e=>e.currentTarget.style.background=`${ms.jiraKey}10`}>
-              <span style={{width:12,height:12,borderRadius:"50%",background:ms.jiraKey,flexShrink:0,boxShadow:`0 0 0 3px ${ms.jiraKey}30`}}/>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:ms.jiraKey,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ms.title}</div>
-                <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>{MILESTONE_LEGEND[ms.jiraKey]||"Other"}</div>
-              </div>
-              <span style={{fontSize:11,color:C.textMuted}}>›</span>
-            </div>
-          ))}
-        </div>
-        {/* add another */}
-        <button onClick={()=>{setDayMsModal(null);openAddMilestone(dayMsModal.dateKey);}} style={{width:"100%",marginTop:16,background:C.surfaceAlt,border:`1px dashed ${C.borderMid}`,color:C.textSecond,padding:"9px 0",borderRadius:9,fontSize:12,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-          <span style={{fontSize:14,color:"#D97706"}}>+</span> Add milestone on this date
+        <button className="ghost-button" onClick={() => onAddPlanned(member.id)}>
+          Add planned item
         </button>
       </div>
+
+      <div className="team-card-grid">
+        <div>
+          <span>Planned</span>
+          <strong>{metrics.planned.length}</strong>
+        </div>
+        <div>
+          <span>Ops active</span>
+          <strong>{metrics.opsActive.length}</strong>
+        </div>
+        <div>
+          <span>At risk</span>
+          <strong>{metrics.atRisk.length}</strong>
+        </div>
+      </div>
+
+      <div className="load-meter">
+        <div className={`load-bar ${getPriorityTone(metrics.loadScore)}`} style={{ width: `${metrics.loadScore}%` }} />
+      </div>
+      <p className="load-caption">{metrics.loadLabel}</p>
+
+      <div className="team-list-block">
+        <span className="mini-label">Next up</span>
+        {metrics.focus.length > 0 ? (
+          <ul className="compact-list">
+            {metrics.focus.map((item) => (
+              <li key={item.id}>
+                <strong>{item.title}</strong>
+                <span>{item.fromJira ? item.status || "Operational" : fmtRange(item.startKey, item.endKey)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="empty-copy">No current focus items.</p>
+        )}
+      </div>
     </div>
   );
+}
+
+function TimelineRow({ item, days, onEdit }) {
+  const startKey = item.startKey || item.dueDateKey || item.resolvedKey;
+  const endKey = item.endKey || item.dueDateKey || item.resolvedKey;
+  const startIndex = startKey ? days.findIndex((day) => dateKey(day) === startKey) : -1;
+  const endIndex = endKey ? days.findIndex((day) => dateKey(day) === endKey) : startIndex;
+  const safeStart = startIndex >= 0 ? startIndex : 0;
+  const safeEnd = endIndex >= safeStart ? endIndex : safeStart;
+  const span = Math.max(1, safeEnd - safeStart + 1);
+  const type = getAssignmentType(item);
 
   return (
-    <>
-      {isMobile ? MobileContent : DesktopContent}
-      {AssignmentModal}
-      {MilestoneModal}
-      {PriorityModal}
-      {DayMilestonesModal}
-      <style>{`
-        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-        html,body{max-width:100vw;overflow-x:hidden;}
-        *{box-sizing:border-box}
-        button{-webkit-appearance:none;appearance:none;}
-        ::-webkit-scrollbar{width:5px;height:5px}
-        ::-webkit-scrollbar-track{background:${C.pageBg}}
-        ::-webkit-scrollbar-thumb{background:${C.borderMid};border-radius:3px}
-        ::-webkit-scrollbar-thumb:hover{background:#94A3B8}
-        tbody tr:hover>td{background:#F8FAFC!important}
-        input[type="date"]::-webkit-calendar-picker-indicator{opacity:0.5;cursor:pointer}
-      `}</style>
-    </>
+    <button className={`timeline-row ${type}`} onClick={() => onEdit(item)}>
+      <div className="timeline-row-copy">
+        <strong>{item.title}</strong>
+        <span>
+          {item.fromJira ? `${item.jiraKey || "Jira"}${item.status ? ` · ${item.status}` : ""}` : fmtRange(item.startKey, item.endKey)}
+        </span>
+      </div>
+      <div className="timeline-track">
+        <div className="timeline-bar" style={{ left: `${(safeStart / days.length) * 100}%`, width: `${(span / days.length) * 100}%` }} />
+      </div>
+    </button>
   );
+}
+
+function TaskTable({ title, items, emptyCopy, onEdit }) {
+  return (
+    <div className="task-table">
+      <div className="task-table-head">
+        <strong>{title}</strong>
+        <span>{items.length}</span>
+      </div>
+      {items.length ? (
+        <div className="task-table-list">
+          {items.map((item) => {
+            const member = TEAM_MEMBERS.find((person) => person.id === item.memberId);
+            const overdue = item.dueDateKey && !item.isDone && item.dueDateKey < TODAY_KEY;
+
+            return (
+              <button key={item.id} className={`task-row ${overdue ? "overdue" : ""}`} onClick={() => onEdit(item)}>
+                <div>
+                  <strong>{item.title}</strong>
+                  <span>{member ? member.name : "Team-wide"}</span>
+                </div>
+                <div className="task-row-meta">
+                  {item.fromJira ? (
+                    <span>{item.jiraKey || item.status}</span>
+                  ) : (
+                    <span>{fmtRange(item.startKey, item.endKey)}</span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="empty-copy">{emptyCopy}</p>
+      )}
+    </div>
+  );
+}
+
+export default function App() {
+  const isMobile = useIsMobile();
+  const [assignments, setAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [saveStatus, setSaveStatus] = useState(null);
+  const [viewMode, setViewMode] = useState("all");
+  const [showDone, setShowDone] = useState(true);
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
+  const [showPriorityModal, setShowPriorityModal] = useState(false);
+  const [editingAssignment, setEditingAssignment] = useState(null);
+  const [editingMilestone, setEditingMilestone] = useState(null);
+  const [editingPriority, setEditingPriority] = useState(null);
+  const [taskForm, setTaskForm] = useState({
+    title: "",
+    memberId: 1,
+    startKey: TODAY_KEY,
+    endKey: dateKey(addDays(TODAY, 4)),
+    fromJira: false,
+    dueDateKey: null,
+  });
+  const [milestoneForm, setMilestoneForm] = useState({
+    title: "",
+    dateKey: TODAY_KEY,
+    color: MILESTONE_COLORS[0],
+  });
+  const [priorityForm, setPriorityForm] = useState({
+    title: "",
+    startKey: "",
+    endKey: "",
+    color: PRIORITY_COLORS[0],
+  });
+  const [nextPriorities, setNextPriorities] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  });
+
+  const nextId = useRef(300);
+  const saveTimer = useRef(null);
+  const timelineDays = useMemo(() => buildTimelineDays(), []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextPriorities));
+    } catch {
+      // Ignore localStorage failures in private mode or locked browsers.
+    }
+  }, [nextPriorities]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+
+      try {
+        const assignmentsResponse = await fetch("/api/assignments");
+        const stored = await assignmentsResponse.json();
+
+        const savedAssignments = Array.isArray(stored)
+          ? stored.map((row) => ({
+              id: row.id,
+              title: row.title,
+              memberId: row.member_id,
+              startKey: row.start_key,
+              endKey: row.end_key,
+              fromJira: row.from_jira,
+              jiraKey: row.jira_key,
+              status: row.status,
+              dueDateKey: row.due_date_key,
+              resolvedKey: row.resolved_key,
+              isDone: row.is_done,
+            }))
+          : [];
+
+        const [activeResponse, doneResponse] = await Promise.all([
+          fetch(
+            `/api/jira?jql=${encodeURIComponent(
+              'status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC'
+            )}`
+          ),
+          fetch(
+            `/api/jira?jql=${encodeURIComponent(
+              'status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC'
+            )}`
+          ),
+        ]);
+
+        const activeData = await activeResponse.json();
+        const doneData = await doneResponse.json();
+
+        const mapIssue = (issue, isDone) => {
+          const { summary, assignee, duedate } = issue.fields;
+          const member = TEAM_MEMBERS.find(
+            (person) =>
+              assignee && person.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase())
+          );
+
+          if (!member) return null;
+
+          const dueDateKey = duedate ? dateKey(new Date(`${duedate}T12:00:00`)) : null;
+          const resolved = issue.fields.transitionDate || issue.fields.resolutiondate;
+          const resolvedKey = resolved ? dateKey(new Date(resolved)) : null;
+
+          return {
+            id: `jira-${issue.id}`,
+            title: summary,
+            memberId: member.id,
+            startKey: null,
+            endKey: null,
+            fromJira: true,
+            jiraKey: issue.key,
+            status: issue.fields.status?.name,
+            dueDateKey,
+            resolvedKey,
+            isDone,
+          };
+        };
+
+        const jiraAssignments = [
+          ...(activeData.issues || []).map((issue) => mapIssue(issue, false)),
+          ...(doneData.issues || []).map((issue) => mapIssue(issue, true)),
+        ].filter(Boolean);
+
+        const merged = [...savedAssignments.filter((item) => !item.fromJira), ...jiraAssignments];
+
+        if (!cancelled) {
+          setAssignments(merged);
+          await persistAssignments(merged, setSaveStatus);
+        }
+      } catch (error) {
+        console.error("Initial load failed", error);
+        if (!cancelled) setSyncStatus({ type: "error", message: "Unable to load Jira and saved assignments." });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const visibleAssignments = useMemo(() => {
+    return assignments.filter((item) => {
+      if (item.status === "MILESTONE") return true;
+      if (!showDone && item.isDone) return false;
+      if (viewMode === "planned") return !item.fromJira;
+      if (viewMode === "ops") return item.fromJira;
+      return true;
+    });
+  }, [assignments, showDone, viewMode]);
+
+  const milestones = useMemo(
+    () => assignments.filter((item) => item.status === "MILESTONE").sort((a, b) => a.startKey.localeCompare(b.startKey)),
+    [assignments]
+  );
+
+  const plannedItems = useMemo(
+    () => visibleAssignments.filter((item) => !item.fromJira && item.status !== "MILESTONE"),
+    [visibleAssignments]
+  );
+  const opsItems = useMemo(() => visibleAssignments.filter((item) => item.fromJira && !item.isDone), [visibleAssignments]);
+  const doneRecently = useMemo(() => assignments.filter((item) => item.fromJira && item.isDone), [assignments]);
+  const overdueOps = useMemo(
+    () => assignments.filter((item) => item.fromJira && !item.isDone && item.dueDateKey && item.dueDateKey < TODAY_KEY),
+    [assignments]
+  );
+
+  const teamMetrics = useMemo(() => {
+    return TEAM_MEMBERS.map((member) => {
+      const memberAssignments = assignments.filter((item) => item.memberId === member.id && item.status !== "MILESTONE");
+      const planned = memberAssignments.filter((item) => !item.fromJira && !item.isDone);
+      const opsActive = memberAssignments.filter((item) => item.fromJira && !item.isDone);
+      const atRisk = opsActive.filter((item) => item.dueDateKey && item.dueDateKey < TODAY_KEY);
+      const focus = [...planned, ...opsActive]
+        .sort((a, b) => {
+          const aKey = a.startKey || a.dueDateKey || "9999-12-31";
+          const bKey = b.startKey || b.dueDateKey || "9999-12-31";
+          return aKey.localeCompare(bKey);
+        })
+        .slice(0, 3);
+
+      const loadScore = Math.min(100, planned.length * 18 + opsActive.length * 16 + atRisk.length * 18);
+      const loadLabel =
+        loadScore >= 85 ? "Heavy concentration of work. Review scope or coverage." : loadScore >= 70 ? "Busy but manageable." : "Capacity looks healthy.";
+
+      return { member, planned, opsActive, atRisk, focus, loadScore, loadLabel };
+    });
+  }, [assignments]);
+
+  const summary = useMemo(() => {
+    const activeOps = assignments.filter((item) => item.fromJira && !item.isDone).length;
+    const planned = assignments.filter((item) => !item.fromJira && item.status !== "MILESTONE").length;
+    const done = assignments.filter((item) => item.fromJira && item.isDone).length;
+    const unscheduledPriorities = nextPriorities.filter((item) => !item.startKey).length;
+
+    return {
+      activeOps,
+      planned,
+      done,
+      unscheduledPriorities,
+    };
+  }, [assignments, nextPriorities]);
+
+  function updateAssignments(updater) {
+    setAssignments((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(() => persistAssignments(next, setSaveStatus), 500);
+      return next;
+    });
+  }
+
+  function openNewTask(memberId = 1) {
+    setEditingAssignment(null);
+    setTaskForm({
+      title: "",
+      memberId,
+      startKey: TODAY_KEY,
+      endKey: dateKey(addDays(TODAY, 4)),
+      fromJira: false,
+      dueDateKey: null,
+    });
+    setShowTaskModal(true);
+  }
+
+  function openTask(item) {
+    setEditingAssignment(item);
+    setTaskForm({
+      title: item.title,
+      memberId: item.memberId,
+      startKey: item.startKey || TODAY_KEY,
+      endKey: item.endKey || item.startKey || TODAY_KEY,
+      fromJira: item.fromJira,
+      dueDateKey: item.dueDateKey || null,
+    });
+    setShowTaskModal(true);
+  }
+
+  function saveTask() {
+    if (!taskForm.title.trim()) return;
+    if (!taskForm.fromJira && taskForm.endKey < taskForm.startKey) return;
+
+    const payload = {
+      ...editingAssignment,
+      title: taskForm.title.trim(),
+      memberId: Number(taskForm.memberId),
+      startKey: taskForm.fromJira ? null : taskForm.startKey,
+      endKey: taskForm.fromJira ? null : taskForm.endKey,
+      dueDateKey: taskForm.fromJira ? taskForm.dueDateKey : null,
+      fromJira: taskForm.fromJira,
+    };
+
+    if (editingAssignment) {
+      updateAssignments((current) => current.map((item) => (item.id === editingAssignment.id ? payload : item)));
+    } else {
+      updateAssignments((current) => [
+        ...current,
+        {
+          id: `manual-${nextId.current++}-${Date.now()}`,
+          title: payload.title,
+          memberId: payload.memberId,
+          startKey: payload.startKey,
+          endKey: payload.endKey,
+          fromJira: false,
+          jiraKey: null,
+          status: null,
+          dueDateKey: null,
+          resolvedKey: null,
+          isDone: false,
+        },
+      ]);
+    }
+
+    setShowTaskModal(false);
+  }
+
+  function deleteTask(id) {
+    updateAssignments((current) => current.filter((item) => item.id !== id));
+    setShowTaskModal(false);
+  }
+
+  function openNewMilestone() {
+    setEditingMilestone(null);
+    setMilestoneForm({ title: "", dateKey: TODAY_KEY, color: MILESTONE_COLORS[0] });
+    setShowMilestoneModal(true);
+  }
+
+  function openMilestone(item) {
+    setEditingMilestone(item);
+    setMilestoneForm({ title: item.title, dateKey: item.startKey, color: item.jiraKey || MILESTONE_COLORS[0] });
+    setShowMilestoneModal(true);
+  }
+
+  function saveMilestone() {
+    if (!milestoneForm.title.trim()) return;
+
+    const payload = {
+      id: editingMilestone ? editingMilestone.id : `milestone-${nextId.current++}-${Date.now()}`,
+      title: milestoneForm.title.trim(),
+      memberId: null,
+      startKey: milestoneForm.dateKey,
+      endKey: milestoneForm.dateKey,
+      fromJira: false,
+      jiraKey: milestoneForm.color,
+      status: "MILESTONE",
+      dueDateKey: null,
+      resolvedKey: null,
+      isDone: false,
+    };
+
+    if (editingMilestone) {
+      updateAssignments((current) => current.map((item) => (item.id === editingMilestone.id ? payload : item)));
+    } else {
+      updateAssignments((current) => [...current, payload]);
+    }
+
+    setShowMilestoneModal(false);
+  }
+
+  function deleteMilestone(id) {
+    updateAssignments((current) => current.filter((item) => item.id !== id));
+    setShowMilestoneModal(false);
+  }
+
+  function openNewPriority() {
+    setEditingPriority(null);
+    setPriorityForm({ title: "", startKey: "", endKey: "", color: PRIORITY_COLORS[0] });
+    setShowPriorityModal(true);
+  }
+
+  function openPriority(item) {
+    setEditingPriority(item);
+    setPriorityForm({
+      title: item.title,
+      startKey: item.startKey || "",
+      endKey: item.endKey || "",
+      color: item.color || PRIORITY_COLORS[0],
+    });
+    setShowPriorityModal(true);
+  }
+
+  function savePriority() {
+    if (!priorityForm.title.trim()) return;
+
+    const payload = {
+      id: editingPriority ? editingPriority.id : `priority-${Date.now()}`,
+      title: priorityForm.title.trim(),
+      startKey: priorityForm.startKey || null,
+      endKey: priorityForm.endKey || priorityForm.startKey || null,
+      color: priorityForm.color,
+    };
+
+    if (editingPriority) {
+      setNextPriorities((current) => current.map((item) => (item.id === editingPriority.id ? payload : item)));
+    } else {
+      setNextPriorities((current) => [...current, payload]);
+    }
+
+    setShowPriorityModal(false);
+  }
+
+  function deletePriority(id) {
+    setNextPriorities((current) => current.filter((item) => item.id !== id));
+    setShowPriorityModal(false);
+  }
+
+  async function syncFromJira() {
+    setSyncing(true);
+    setSyncStatus(null);
+
+    try {
+      const [activeResponse, doneResponse] = await Promise.all([
+        fetch(
+          `/api/jira?jql=${encodeURIComponent(
+            'status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC'
+          )}`
+        ),
+        fetch(
+          `/api/jira?jql=${encodeURIComponent(
+            'status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC'
+          )}`
+        ),
+      ]);
+
+      const activeData = await activeResponse.json();
+      const doneData = await doneResponse.json();
+
+      const mapIssue = (issue, isDone) => {
+        const { summary, assignee, duedate, resolutiondate } = issue.fields;
+        const member = TEAM_MEMBERS.find(
+          (person) =>
+            assignee && person.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase())
+        );
+
+        if (!member) return null;
+
+        return {
+          id: `jira-${issue.id}`,
+          title: summary,
+          memberId: member.id,
+          startKey: null,
+          endKey: null,
+          fromJira: true,
+          jiraKey: issue.key,
+          status: issue.fields.status?.name,
+          dueDateKey: duedate ? dateKey(new Date(`${duedate}T12:00:00`)) : null,
+          resolvedKey: resolutiondate ? dateKey(new Date(resolutiondate)) : null,
+          isDone,
+        };
+      };
+
+      const merged = [
+        ...assignments.filter((item) => !item.fromJira),
+        ...(activeData.issues || []).map((issue) => mapIssue(issue, false)).filter(Boolean),
+        ...(doneData.issues || []).map((issue) => mapIssue(issue, true)).filter(Boolean),
+      ];
+
+      updateAssignments(merged);
+      setSyncStatus({
+        type: "success",
+        message: `Synced ${(activeData.issues || []).length} active and ${(doneData.issues || []).length} recently completed Jira tickets.`,
+      });
+    } catch (error) {
+      console.error("Jira sync failed", error);
+      setSyncStatus({ type: "error", message: "Sync failed. Check Jira connection and try again." });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const initiatives = useMemo(() => {
+    const scheduled = [...nextPriorities].sort((a, b) => {
+      const aKey = a.startKey || "9999-12-31";
+      const bKey = b.startKey || "9999-12-31";
+      return aKey.localeCompare(bKey);
+    });
+
+    return scheduled.slice(0, isMobile ? 3 : 4);
+  }, [nextPriorities, isMobile]);
+
+  return (
+    <div className="app-shell">
+      <header className="hero">
+        <div className="hero-copy">
+          <span className="hero-badge">Team Planner</span>
+          <h1>Leadership view for projects, priorities, and Jira-driven operational work.</h1>
+          <p>
+            Use this dashboard to answer three questions quickly: what the team is delivering, where operational work is
+            pulling attention, and what needs management intervention next.
+          </p>
+        </div>
+
+        <div className="hero-actions">
+          <SaveStatus status={saveStatus} />
+          <button className="secondary-button" onClick={() => setShowDone((current) => !current)}>
+            {showDone ? "Hide completed" : "Show completed"}
+          </button>
+          <button className="secondary-button" onClick={openNewMilestone}>
+            Add milestone
+          </button>
+          <button className="primary-button" onClick={() => openNewTask(1)}>
+            Add planned item
+          </button>
+          <button className="sync-button" onClick={syncFromJira} disabled={syncing}>
+            {syncing ? "Syncing Jira..." : "Sync Jira"}
+          </button>
+        </div>
+      </header>
+
+      {syncStatus ? <div className={`status-banner ${syncStatus.type}`}>{syncStatus.message}</div> : null}
+
+      <div className="summary-grid">
+        <SummaryCard label="Operational work" value={summary.activeOps} detail="Active Jira tickets in flight" tone="blue" />
+        <SummaryCard label="Planned delivery" value={summary.planned} detail="Manual project work on the roadmap" tone="orange" />
+        <SummaryCard label="Recently finished" value={summary.done} detail="Done or deployed in the last 30 days" tone="green" />
+        <SummaryCard
+          label="Needs sizing"
+          value={summary.unscheduledPriorities}
+          detail="Upcoming priorities without dates yet"
+          tone="purple"
+        />
+      </div>
+
+      <div className="control-row">
+        <div className="segmented-control">
+          <button className={viewMode === "all" ? "active" : ""} onClick={() => setViewMode("all")}>
+            All work
+          </button>
+          <button className={viewMode === "planned" ? "active" : ""} onClick={() => setViewMode("planned")}>
+            Project level
+          </button>
+          <button className={viewMode === "ops" ? "active" : ""} onClick={() => setViewMode("ops")}>
+            Operational only
+          </button>
+        </div>
+        <div className="date-chip">
+          <span>Today</span>
+          <strong>{fmtDate(TODAY_KEY, { month: "long", day: "numeric", year: "numeric" })}</strong>
+        </div>
+      </div>
+
+      {loading ? (
+        <section className="loading-panel">
+          <div className="spinner" />
+          <p>Loading team work, saved plans, and Jira sync data...</p>
+        </section>
+      ) : (
+        <main className="dashboard-grid">
+          <SectionCard
+            eyebrow="Upcoming priorities"
+            title="What management should line up next"
+            action={
+              <button className="ghost-button" onClick={openNewPriority}>
+                Add priority
+              </button>
+            }
+          >
+            {initiatives.length ? (
+              <div className="priority-list">
+                {initiatives.map((item) => (
+                  <PriorityPill key={item.id} item={item} onClick={openPriority} />
+                ))}
+              </div>
+            ) : (
+              <p className="empty-copy">Add upcoming priorities so the team can distinguish current work from what is coming next.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard eyebrow="Management signals" title="Where attention is needed now">
+            <div className="signals-grid">
+              <div className="signal-card warn">
+                <span>Operational risk</span>
+                <strong>{overdueOps.length}</strong>
+                <p>{overdueOps.length ? "Jira tickets are overdue and may need intervention." : "No overdue Jira work right now."}</p>
+              </div>
+              <div className="signal-card calm">
+                <span>Milestones</span>
+                <strong>{milestones.length}</strong>
+                <p>{milestones.length ? "Key dates are being tracked on the calendar." : "No milestone markers have been added yet."}</p>
+              </div>
+              <div className="signal-card">
+                <span>Next priorities</span>
+                <strong>{nextPriorities.length}</strong>
+                <p>{nextPriorities.length ? "Upcoming items are captured for handoff and planning." : "No upcoming priorities are documented yet."}</p>
+              </div>
+            </div>
+          </SectionCard>
+
+          <SectionCard eyebrow="Team management" title="Capacity and focus by person" className="wide">
+            <div className="team-grid">
+              {teamMetrics.map((metrics) => (
+                <TeamLoadCard key={metrics.member.id} member={metrics.member} metrics={metrics} onAddPlanned={openNewTask} />
+              ))}
+            </div>
+          </SectionCard>
+
+          <SectionCard eyebrow="Project delivery" title="Planned project work">
+            <TaskTable
+              title="Planned items"
+              items={plannedItems}
+              emptyCopy="No planned project items are visible in this view."
+              onEdit={openTask}
+            />
+          </SectionCard>
+
+          <SectionCard eyebrow="Operational execution" title="Active Jira work">
+            <TaskTable
+              title="Operational tickets"
+              items={opsItems}
+              emptyCopy="No active Jira tickets are visible in this view."
+              onEdit={openTask}
+            />
+          </SectionCard>
+
+          <SectionCard eyebrow="Completed recently" title="Last 30 days from Jira">
+            <TaskTable
+              title="Done or deployed"
+              items={doneRecently.slice(0, 8)}
+              emptyCopy="No completed Jira tickets are available right now."
+              onEdit={openTask}
+            />
+          </SectionCard>
+
+          <SectionCard eyebrow="Milestones" title="Dates the team is working toward">
+            {milestones.length ? (
+              <div className="milestone-list">
+                {milestones.map((milestone) => (
+                  <button key={milestone.id} className="milestone-item" onClick={() => openMilestone(milestone)}>
+                    <span className="milestone-dot" style={{ background: milestone.jiraKey }} />
+                    <div>
+                      <strong>{milestone.title}</strong>
+                      <span>
+                        {fmtDate(milestone.startKey, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
+                        {MILESTONE_LEGEND[milestone.jiraKey] || "Other"}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-copy">Add milestone markers so project delivery and operational work share the same timeline context.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard eyebrow="Timeline" title="60-day roadmap at a glance" className="wide">
+            <div className="timeline-header">
+              {timelineDays.map((day) => (
+                <div key={dateKey(day)} className={`timeline-day ${dateKey(day) === TODAY_KEY ? "today" : ""}`}>
+                  <span>{day.toLocaleDateString("en-US", { month: "short" })}</span>
+                  <strong>{day.getDate()}</strong>
+                </div>
+              ))}
+            </div>
+            <div className="timeline-body">
+              {[...plannedItems, ...opsItems, ...milestones].slice(0, 18).map((item) => (
+                <TimelineRow key={item.id} item={item} days={timelineDays} onEdit={item.status === "MILESTONE" ? openMilestone : openTask} />
+              ))}
+              {!plannedItems.length && !opsItems.length && !milestones.length ? <p className="empty-copy">Nothing is scheduled on the timeline yet.</p> : null}
+            </div>
+          </SectionCard>
+        </main>
+      )}
+
+      {showTaskModal ? (
+        <div className="modal-backdrop" onClick={() => setShowTaskModal(false)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">{editingAssignment?.fromJira ? "Operational item" : "Planned item"}</span>
+                <h3>{editingAssignment ? "Edit item" : "New planned item"}</h3>
+              </div>
+              <button className="icon-button" onClick={() => setShowTaskModal(false)}>
+                x
+              </button>
+            </div>
+
+            <label>
+              <span>Title</span>
+              <input value={taskForm.title} onChange={(event) => setTaskForm((current) => ({ ...current, title: event.target.value }))} />
+            </label>
+
+            <label>
+              <span>Owner</span>
+              <select
+                value={taskForm.memberId}
+                onChange={(event) => setTaskForm((current) => ({ ...current, memberId: Number(event.target.value) }))}
+              >
+                {TEAM_MEMBERS.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name} - {member.role}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {!editingAssignment?.fromJira ? (
+              <div className="modal-grid">
+                <label>
+                  <span>Start date</span>
+                  <input
+                    type="date"
+                    value={taskForm.startKey}
+                    onChange={(event) => setTaskForm((current) => ({ ...current, startKey: event.target.value }))}
+                  />
+                </label>
+                <label>
+                  <span>End date</span>
+                  <input
+                    type="date"
+                    value={taskForm.endKey}
+                    min={taskForm.startKey}
+                    onChange={(event) => setTaskForm((current) => ({ ...current, endKey: event.target.value }))}
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            {editingAssignment?.fromJira && editingAssignment?.jiraKey ? (
+              <a className="link-button" href={`${JIRA_BASE}/${editingAssignment.jiraKey}`} target="_blank" rel="noreferrer">
+                Open {editingAssignment.jiraKey} in Jira
+              </a>
+            ) : null}
+
+            <div className="modal-actions">
+              {editingAssignment ? (
+                <button className="danger-button" onClick={() => deleteTask(editingAssignment.id)}>
+                  Delete
+                </button>
+              ) : null}
+              <button className="primary-button" onClick={saveTask}>
+                {editingAssignment ? "Save changes" : "Add item"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showMilestoneModal ? (
+        <div className="modal-backdrop" onClick={() => setShowMilestoneModal(false)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">Milestone</span>
+                <h3>{editingMilestone ? "Edit milestone" : "New milestone"}</h3>
+              </div>
+              <button className="icon-button" onClick={() => setShowMilestoneModal(false)}>
+                x
+              </button>
+            </div>
+
+            <label>
+              <span>Milestone name</span>
+              <input
+                value={milestoneForm.title}
+                onChange={(event) => setMilestoneForm((current) => ({ ...current, title: event.target.value }))}
+              />
+            </label>
+
+            <label>
+              <span>Date</span>
+              <input
+                type="date"
+                value={milestoneForm.dateKey}
+                onChange={(event) => setMilestoneForm((current) => ({ ...current, dateKey: event.target.value }))}
+              />
+            </label>
+
+            <div>
+              <span className="field-label">Category color</span>
+              <div className="color-palette">
+                {MILESTONE_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    className={milestoneForm.color === color ? "color-swatch active" : "color-swatch"}
+                    style={{ background: color }}
+                    onClick={() => setMilestoneForm((current) => ({ ...current, color }))}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              {editingMilestone ? (
+                <button className="danger-button" onClick={() => deleteMilestone(editingMilestone.id)}>
+                  Delete
+                </button>
+              ) : null}
+              <button className="primary-button" onClick={saveMilestone}>
+                {editingMilestone ? "Save milestone" : "Add milestone"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showPriorityModal ? (
+        <div className="modal-backdrop" onClick={() => setShowPriorityModal(false)}>
+          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">Upcoming priority</span>
+                <h3>{editingPriority ? "Edit priority" : "New priority"}</h3>
+              </div>
+              <button className="icon-button" onClick={() => setShowPriorityModal(false)}>
+                x
+              </button>
+            </div>
+
+            <label>
+              <span>Title</span>
+              <input
+                value={priorityForm.title}
+                onChange={(event) => setPriorityForm((current) => ({ ...current, title: event.target.value }))}
+              />
+            </label>
+
+            <div className="modal-grid">
+              <label>
+                <span>Start date</span>
+                <input
+                  type="date"
+                  value={priorityForm.startKey}
+                  onChange={(event) => setPriorityForm((current) => ({ ...current, startKey: event.target.value }))}
+                />
+              </label>
+              <label>
+                <span>End date</span>
+                <input
+                  type="date"
+                  value={priorityForm.endKey}
+                  min={priorityForm.startKey}
+                  onChange={(event) => setPriorityForm((current) => ({ ...current, endKey: event.target.value }))}
+                />
+              </label>
+            </div>
+
+            <div>
+              <span className="field-label">Color tag</span>
+              <div className="color-palette">
+                {PRIORITY_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    className={priorityForm.color === color ? "color-swatch active" : "color-swatch"}
+                    style={{ background: color }}
+                    onClick={() => setPriorityForm((current) => ({ ...current, color }))}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="modal-actions">
+              {editingPriority ? (
+                <button className="danger-button" onClick={() => deletePriority(editingPriority.id)}>
+                  Delete
+                </button>
+              ) : null}
+              <button className="primary-button" onClick={savePriority}>
+                {editingPriority ? "Save priority" : "Add priority"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+async function persistAssignments(list, setSaveStatus) {
+  setSaveStatus("saving");
+
+  try {
+    const response = await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assignments: list }),
+    });
+
+    if (!response.ok) throw new Error("Save failed");
+
+    setSaveStatus("saved");
+    window.setTimeout(() => setSaveStatus(null), 2000);
+  } catch (error) {
+    console.error("Persist failed", error);
+    setSaveStatus("error");
+  }
 }
