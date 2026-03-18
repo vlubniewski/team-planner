@@ -429,6 +429,78 @@ function TaskTable({ title, items, emptyCopy, onEdit }) {
   );
 }
 
+function MemberWorkBoard({ member, projects, opsItems, onEditTask }) {
+  const dailyOps = opsItems
+    .filter((item) => !item.isDone)
+    .sort((a, b) => {
+      const aKey = a.dueDateKey || "9999-12-31";
+      const bKey = b.dueDateKey || "9999-12-31";
+      return aKey.localeCompare(bKey);
+    });
+
+  return (
+    <div className="member-work-card">
+      <div className="member-work-head">
+        <div className="person-lockup">
+          <div className="avatar" style={{ "--avatar-accent": member.color }}>
+            {member.initials}
+          </div>
+          <div>
+            <strong>{member.name}</strong>
+            <span>{member.role}</span>
+          </div>
+        </div>
+        <div className="member-work-summary">
+          <span>{projects.length} active project item{projects.length === 1 ? "" : "s"}</span>
+          <span>{dailyOps.length} daily ops item{dailyOps.length === 1 ? "" : "s"}</span>
+        </div>
+      </div>
+
+      <div className="member-work-columns">
+        <div className="member-work-column">
+          <div className="member-work-column-head">
+            <strong>Project work</strong>
+            <span>What this person is delivering</span>
+          </div>
+          {projects.length ? (
+            <div className="member-work-list">
+              {projects.map((item) => (
+                <button key={item.id} className="work-item project" onClick={() => onEditTask(item)}>
+                  <strong>{item.title}</strong>
+                  <span>{fmtRange(item.startKey, item.endKey)}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-copy">No active project items assigned.</p>
+          )}
+        </div>
+
+        <div className="member-work-column ops">
+          <div className="member-work-column-head">
+            <strong>Daily operational items</strong>
+            <span>Jira work that can interrupt delivery</span>
+          </div>
+          {dailyOps.length ? (
+            <div className="member-work-list">
+              {dailyOps.map((item) => (
+                <button key={item.id} className="work-item ops" onClick={() => onEditTask(item)}>
+                  <strong>{item.title}</strong>
+                  <span>
+                    {item.status || "Operational"}{item.dueDateKey ? ` · Due ${fmtDate(item.dueDateKey)}` : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-copy">No daily operational items assigned.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const isMobile = useIsMobile();
   const [assignments, setAssignments] = useState([]);
@@ -651,6 +723,18 @@ export default function App() {
         loadScore >= 85 ? "Heavy concentration of work. Review scope or coverage." : loadScore >= 70 ? "Busy but manageable." : "Capacity looks healthy.";
 
       return { member, planned, opsActive, atRisk, focus, loadScore, loadLabel };
+    });
+  }, [assignments]);
+
+  const memberWorkView = useMemo(() => {
+    return TEAM_MEMBERS.map((member) => {
+      const memberAssignments = assignments.filter((item) => item.memberId === member.id);
+      const projects = memberAssignments
+        .filter((item) => !item.fromJira && item.status !== "MILESTONE" && !item.isDone)
+        .sort((a, b) => (a.startKey || "9999-12-31").localeCompare(b.startKey || "9999-12-31"));
+      const ops = memberAssignments.filter((item) => item.fromJira);
+
+      return { member, projects, ops };
     });
   }, [assignments]);
 
@@ -1030,6 +1114,18 @@ export default function App() {
                 <strong>{nextPriorities.length}</strong>
                 <p>{nextPriorities.length ? "Upcoming items are captured for handoff and planning." : "No upcoming priorities are documented yet."}</p>
               </div>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            eyebrow="Work by team member"
+            title="What each person is actively working on"
+            className="wide"
+          >
+            <div className="member-work-grid">
+              {memberWorkView.map(({ member, projects, ops }) => (
+                <MemberWorkBoard key={member.id} member={member} projects={projects} opsItems={ops} onEditTask={openTask} />
+              ))}
             </div>
           </SectionCard>
 
