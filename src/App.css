@@ -894,6 +894,22 @@ button:disabled {
   min-width: 260px;
 }
 
+.timeline-row-submeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 8px;
+  align-items: center;
+}
+
+.timeline-link {
+  color: #1d4ed8;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .timeline-track {
   position: relative;
   flex: 1;
@@ -1067,6 +1083,10 @@ button:disabled {
   .timeline-track {
     width: 100%;
     min-width: 0;
+  }
+
+  .timeline-row-submeta {
+    align-items: flex-start;
   }
 
   .team-card-grid {

@@ -211,6 +211,22 @@ function TimelineRow({ item, days, onEdit }) {
         <span>
           {item.fromJira ? `${item.jiraKey || "Jira"}${item.status ? ` · ${item.status}` : ""}` : fmtRange(item.startKey, item.endKey)}
         </span>
+        {item.fromJira ? (
+          <div className="timeline-row-submeta">
+            <span>{item.isDone && item.resolvedKey ? `Completed ${fmtDate(item.resolvedKey)}` : item.dueDateKey ? `Due ${fmtDate(item.dueDateKey)}` : "No due date"}</span>
+            {item.jiraKey ? (
+              <a
+                href={`${JIRA_BASE}/${item.jiraKey}`}
+                target="_blank"
+                rel="noreferrer"
+                className="timeline-link"
+                onClick={(event) => event.stopPropagation()}
+              >
+                Open in Jira
+              </a>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <div className="timeline-track">
         <div className="timeline-bar" style={{ left: `${(safeStart / days.length) * 100}%`, width: `${(span / days.length) * 100}%` }} />
@@ -269,7 +285,6 @@ function MemberRoadmap({ member, items, days, onEditTask }) {
             <div className="roadmap-lane ops-lane">
               <div className="roadmap-lane-label">
                 <strong>Operational pull</strong>
-                <span>Jira work that can distract from delivery</span>
               </div>
               <div className="roadmap-lane-items">
                 {ops.map((item) => (
@@ -805,8 +820,6 @@ export default function App() {
       <header className="hero">
         <div className="hero-copy">
           <span className="hero-badge">Team Planner</span>
-          <h1>Leadership board for delivery, priorities, and Jira operations.</h1>
-          <p>See the team at a glance, spot delivery risk early, and keep project work visible beside operational pull.</p>
         </div>
 
         <div className="hero-actions">
