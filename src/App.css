@@ -801,6 +801,83 @@ button:disabled {
   gap: 20px;
 }
 
+.member-timeline-body {
+  gap: 18px;
+}
+
+.member-roadmap {
+  padding: 18px;
+  border-radius: 24px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.member-roadmap-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.member-roadmap-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.member-roadmap-metrics span {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.member-roadmap-rows {
+  display: grid;
+  gap: 14px;
+}
+
+.roadmap-lane {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+  border-radius: 20px;
+  background: #f8fafc;
+}
+
+.ops-lane {
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%);
+}
+
+.done-lane {
+  background: linear-gradient(180deg, #f0fdf4 0%, #f8fffb 100%);
+}
+
+.roadmap-lane-label strong {
+  display: block;
+  color: #10233f;
+}
+
+.roadmap-lane-label span {
+  display: block;
+  margin-top: 4px;
+  color: #6c7f96;
+  font-size: 0.88rem;
+}
+
+.roadmap-lane-items {
+  display: grid;
+  gap: 10px;
+}
+
+.milestone-roadmap {
+  border-style: dashed;
+}
+
 .timeline-row.planned .timeline-bar {
   background: linear-gradient(90deg, #f97316, #fb923c);
 }
@@ -976,9 +1053,14 @@ button:disabled {
   .team-card-head,
   .task-row,
   .timeline-row,
-  .gantt-meta {
+  .gantt-meta,
+  .member-roadmap-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .roadmap-lane {
+    grid-template-columns: 1fr;
   }
 
   .timeline-row-copy,

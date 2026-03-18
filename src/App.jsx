@@ -219,6 +219,87 @@ function TimelineRow({ item, days, onEdit }) {
   );
 }
 
+function MemberRoadmap({ member, items, days, onEditTask }) {
+  const sortedItems = [...items].sort((a, b) => {
+    const aKey = a.startKey || a.dueDateKey || a.resolvedKey || "9999-12-31";
+    const bKey = b.startKey || b.dueDateKey || b.resolvedKey || "9999-12-31";
+    return aKey.localeCompare(bKey);
+  });
+
+  const planned = sortedItems.filter((item) => !item.fromJira && item.status !== "MILESTONE");
+  const ops = sortedItems.filter((item) => item.fromJira && !item.isDone);
+  const done = sortedItems.filter((item) => item.fromJira && item.isDone);
+
+  return (
+    <div className="member-roadmap">
+      <div className="member-roadmap-head">
+        <div className="person-lockup">
+          <div className="avatar" style={{ "--avatar-accent": member.color }}>
+            {member.initials}
+          </div>
+          <div>
+            <strong>{member.name}</strong>
+            <span>{member.role}</span>
+          </div>
+        </div>
+        <div className="member-roadmap-metrics">
+          <span>{planned.length} project</span>
+          <span>{ops.length} ops active</span>
+          <span>{done.length} completed</span>
+        </div>
+      </div>
+
+      {sortedItems.length ? (
+        <div className="member-roadmap-rows">
+          {planned.length ? (
+            <div className="roadmap-lane">
+              <div className="roadmap-lane-label">
+                <strong>Project work</strong>
+                <span>Manual items tied to delivery</span>
+              </div>
+              <div className="roadmap-lane-items">
+                {planned.map((item) => (
+                  <TimelineRow key={item.id} item={item} days={days} onEdit={onEditTask} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {ops.length ? (
+            <div className="roadmap-lane ops-lane">
+              <div className="roadmap-lane-label">
+                <strong>Operational pull</strong>
+                <span>Jira work that can distract from delivery</span>
+              </div>
+              <div className="roadmap-lane-items">
+                {ops.map((item) => (
+                  <TimelineRow key={item.id} item={item} days={days} onEdit={onEditTask} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {done.length ? (
+            <div className="roadmap-lane done-lane">
+              <div className="roadmap-lane-label">
+                <strong>Completed ops</strong>
+                <span>Recently resolved Jira work</span>
+              </div>
+              <div className="roadmap-lane-items">
+                {done.slice(0, 3).map((item) => (
+                  <TimelineRow key={item.id} item={item} days={days} onEdit={onEditTask} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="empty-copy">No project or operational work is assigned to this person in the 60-day window.</p>
+      )}
+    </div>
+  );
+}
+
 function TaskTable({ title, items, emptyCopy, onEdit }) {
   return (
     <div className="task-table">
@@ -917,14 +998,14 @@ export default function App() {
             )}
           </SectionCard>
 
-          <SectionCard eyebrow="Gantt view" title="60-day delivery map" className="wide">
+          <SectionCard eyebrow="Gantt view" title="60-day delivery distraction map" className="wide">
             <div className="gantt-meta">
               <div className="gantt-legend">
                 <span><i className="legend-chip planned" /> Planned</span>
                 <span><i className="legend-chip ops" /> Operational</span>
                 <span><i className="legend-chip milestone" /> Milestone</span>
               </div>
-              <p>Projects, operations, and milestones share one visual timeline so leadership can spot overlap and pressure quickly.</p>
+              <p>Grouped by team member so you can see where operational work is competing with project delivery and when those distractions land.</p>
             </div>
             <div className="timeline-months">
               {timelineMonths.map((month) => (
@@ -941,11 +1022,42 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <div className="timeline-body">
-              {[...plannedItems, ...opsItems, ...milestones].slice(0, 18).map((item) => (
-                <TimelineRow key={item.id} item={item} days={timelineDays} onEdit={item.status === "MILESTONE" ? openMilestone : openTask} />
-              ))}
-              {!plannedItems.length && !opsItems.length && !milestones.length ? <p className="empty-copy">Nothing is scheduled on the timeline yet.</p> : null}
+            <div className="timeline-body member-timeline-body">
+              {TEAM_MEMBERS.map((member) => {
+                const memberItems = assignments.filter((item) => item.memberId === member.id && (showDone || !item.isDone));
+                return (
+                  <MemberRoadmap
+                    key={member.id}
+                    member={member}
+                    items={memberItems}
+                    days={timelineDays}
+                    onEditTask={openTask}
+                  />
+                );
+              })}
+              {milestones.length ? (
+                <div className="member-roadmap milestone-roadmap">
+                  <div className="member-roadmap-head">
+                    <div>
+                      <strong>Shared milestones</strong>
+                      <span>Team-wide checkpoints affecting delivery</span>
+                    </div>
+                  </div>
+                  <div className="member-roadmap-rows">
+                    <div className="roadmap-lane">
+                      <div className="roadmap-lane-label">
+                        <strong>Milestones</strong>
+                        <span>Delivery anchors across the team</span>
+                      </div>
+                      <div className="roadmap-lane-items">
+                        {milestones.map((item) => (
+                          <TimelineRow key={item.id} item={item} days={timelineDays} onEdit={openMilestone} />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </SectionCard>
         </main>
