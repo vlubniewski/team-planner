@@ -1051,33 +1051,31 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="hero gantt-hero">
-        <div className="hero-copy">
+      <section className="gantt-toolbar">
+        <div className="gantt-toolbar-title">
           <span className="hero-badge">Team Planner</span>
           <h1>60-day delivery map</h1>
-          <p>Project work, operational distractions, and milestones in one focused Gantt view.</p>
         </div>
-
-        <div className="hero-actions">
-          <div className="hero-mini-board">
-            <div>
-              <span>Planned work</span>
-              <strong>{summary.planned}</strong>
-            </div>
-            <div>
-              <span>Operational work</span>
-              <strong>{summary.activeOps}</strong>
-            </div>
-            <div>
-              <span>Milestones</span>
-              <strong>{milestones.length}</strong>
-            </div>
+        <div className="gantt-toolbar-metrics">
+          <div>
+            <span>Planned</span>
+            <strong>{summary.planned}</strong>
           </div>
+          <div>
+            <span>Ops</span>
+            <strong>{summary.activeOps}</strong>
+          </div>
+          <div>
+            <span>Milestones</span>
+            <strong>{milestones.length}</strong>
+          </div>
+        </div>
+        <div className="gantt-toolbar-controls">
           <SaveStatus status={saveStatus} />
-          <button className="secondary-button" onClick={() => setShowDone((current) => !current)}>
+          <button className="ghost-button" onClick={() => setShowDone((current) => !current)}>
             {showDone ? "Hide completed" : "Show completed"}
           </button>
-          <button className="secondary-button" onClick={openNewMilestone}>
+          <button className="ghost-button" onClick={openNewMilestone}>
             Add milestone
           </button>
           <button className="primary-button" onClick={() => openNewTask(1)}>
@@ -1087,21 +1085,9 @@ export default function App() {
             {syncing ? "Syncing Jira..." : "Sync Jira"}
           </button>
         </div>
-      </header>
+      </section>
 
       {syncStatus ? <div className={`status-banner ${syncStatus.type}`}>{syncStatus.message}</div> : null}
-
-      <div className="summary-grid">
-        <SummaryCard label="Operational work" value={summary.activeOps} detail="Active Jira tickets in flight" tone="blue" />
-        <SummaryCard label="Planned delivery" value={summary.planned} detail="Manual project work on the roadmap" tone="orange" />
-        <SummaryCard label="Recently finished" value={summary.done} detail="Done or deployed in the last 30 days" tone="green" />
-        <SummaryCard
-          label="Needs sizing"
-          value={summary.unscheduledPriorities}
-          detail="Upcoming priorities without dates yet"
-          tone="purple"
-        />
-      </div>
 
       <div className="control-row">
         <div className="segmented-control">

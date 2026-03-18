@@ -220,6 +220,63 @@ button:disabled {
   border: 1px solid #fecaca;
 }
 
+.gantt-toolbar {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.08);
+}
+
+.gantt-toolbar-title h1 {
+  margin: 6px 0 0;
+  color: #10233f;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.55rem, 2.2vw, 2rem);
+  line-height: 1.05;
+}
+
+.gantt-toolbar-metrics {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.gantt-toolbar-metrics div {
+  min-width: 90px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.gantt-toolbar-metrics span {
+  display: block;
+  color: #6c7f96;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.gantt-toolbar-metrics strong {
+  display: block;
+  margin-top: 4px;
+  color: #10233f;
+  font-size: 1.2rem;
+}
+
+.gantt-toolbar-controls {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .gantt-only-layout {
   display: grid;
   gap: 18px;
@@ -1291,6 +1348,15 @@ button:disabled {
   .hero-actions,
   .control-row {
     display: flex;
+  }
+
+  .gantt-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .gantt-toolbar-controls {
+    justify-content: flex-start;
   }
 
   .hero-mini-board,
