@@ -285,6 +285,57 @@ button:disabled {
   margin-top: 22px;
 }
 
+.status-filter-bar {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+}
+
+.status-filter-copy strong {
+  display: block;
+  color: #10233f;
+}
+
+.status-filter-copy span {
+  display: block;
+  margin-top: 4px;
+  color: #6c7f96;
+  font-size: 0.92rem;
+}
+
+.status-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-chip {
+  padding: 9px 12px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  color: #52647d;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.status-chip.active {
+  background: #10233f;
+  border-color: #10233f;
+  color: #f8fbff;
+}
+
 .segmented-control {
   display: inline-flex;
   padding: 6px;

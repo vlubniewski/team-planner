@@ -126,6 +126,41 @@ function InfoHint({ label, text }) {
   );
 }
 
+function StatusFilterBar({ statuses, selected, onToggle, onSelectAll, onClearAll }) {
+  if (!statuses.length) return null;
+
+  return (
+    <div className="status-filter-bar">
+      <div className="status-filter-copy">
+        <strong>Operational status filters</strong>
+        <span>Show or hide Jira statuses across all operational views.</span>
+      </div>
+      <div className="status-filter-actions">
+        <button className="ghost-button" onClick={onSelectAll}>
+          Select all
+        </button>
+        <button className="ghost-button" onClick={onClearAll}>
+          Clear all
+        </button>
+      </div>
+      <div className="status-filter-chips">
+        {statuses.map((status) => {
+          const active = selected.includes(status);
+          return (
+            <button
+              key={status}
+              className={`status-chip ${active ? "active" : ""}`}
+              onClick={() => onToggle(status)}
+            >
+              {status}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PriorityPill({ item, onClick }) {
   return (
     <button className="priority-pill" onClick={() => onClick(item)} style={{ "--pill-accent": item.color }}>
@@ -513,6 +548,7 @@ export default function App() {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [showPriorityModal, setShowPriorityModal] = useState(false);
+  const [selectedJiraStatuses, setSelectedJiraStatuses] = useState([]);
   const [editingAssignment, setEditingAssignment] = useState(null);
   const [editingMilestone, setEditingMilestone] = useState(null);
   const [editingPriority, setEditingPriority] = useState(null);
@@ -568,6 +604,21 @@ export default function App() {
       // Ignore localStorage failures in private mode or locked browsers.
     }
   }, [nextPriorities]);
+
+  const availableJiraStatuses = useMemo(() => {
+    return [...new Set(assignments.filter((item) => item.fromJira).map((item) => item.status).filter(Boolean))].sort();
+  }, [assignments]);
+
+  useEffect(() => {
+    if (!availableJiraStatuses.length) return;
+
+    setSelectedJiraStatuses((current) => {
+      if (!current.length) return availableJiraStatuses;
+      const next = current.filter((status) => availableJiraStatuses.includes(status));
+      const additions = availableJiraStatuses.filter((status) => !next.includes(status));
+      return [...next, ...additions];
+    });
+  }, [availableJiraStatuses]);
 
   useEffect(() => {
     let cancelled = false;
@@ -669,11 +720,12 @@ export default function App() {
     return assignments.filter((item) => {
       if (item.status === "MILESTONE") return true;
       if (!showDone && item.isDone) return false;
+      if (item.fromJira && selectedJiraStatuses.length && !selectedJiraStatuses.includes(item.status || "")) return false;
       if (viewMode === "planned") return !item.fromJira;
       if (viewMode === "ops") return item.fromJira;
       return true;
     });
-  }, [assignments, showDone, viewMode]);
+  }, [assignments, selectedJiraStatuses, showDone, viewMode]);
 
   const milestones = useMemo(
     () => assignments.filter((item) => item.status === "MILESTONE").sort((a, b) => a.startKey.localeCompare(b.startKey)),
@@ -708,7 +760,9 @@ export default function App() {
     return TEAM_MEMBERS.map((member) => {
       const memberAssignments = assignments.filter((item) => item.memberId === member.id && item.status !== "MILESTONE");
       const planned = memberAssignments.filter((item) => !item.fromJira && !item.isDone);
-      const opsActive = memberAssignments.filter((item) => item.fromJira && !item.isDone);
+      const opsActive = memberAssignments.filter(
+        (item) => item.fromJira && !item.isDone && selectedJiraStatuses.includes(item.status || "")
+      );
       const atRisk = opsActive.filter((item) => item.dueDateKey && item.dueDateKey < TODAY_KEY);
       const focus = [...planned, ...opsActive]
         .sort((a, b) => {
@@ -724,7 +778,7 @@ export default function App() {
 
       return { member, planned, opsActive, atRisk, focus, loadScore, loadLabel };
     });
-  }, [assignments]);
+  }, [assignments, selectedJiraStatuses]);
 
   const memberWorkView = useMemo(() => {
     return TEAM_MEMBERS.map((member) => {
@@ -732,11 +786,11 @@ export default function App() {
       const projects = memberAssignments
         .filter((item) => !item.fromJira && item.status !== "MILESTONE" && !item.isDone)
         .sort((a, b) => (a.startKey || "9999-12-31").localeCompare(b.startKey || "9999-12-31"));
-      const ops = memberAssignments.filter((item) => item.fromJira);
+      const ops = memberAssignments.filter((item) => item.fromJira && selectedJiraStatuses.includes(item.status || ""));
 
       return { member, projects, ops };
     });
-  }, [assignments]);
+  }, [assignments, selectedJiraStatuses]);
 
   const summary = useMemo(() => {
     const activeOps = assignments.filter((item) => item.fromJira && !item.isDone).length;
@@ -915,6 +969,12 @@ export default function App() {
     setShowPriorityModal(false);
   }
 
+  function toggleJiraStatus(status) {
+    setSelectedJiraStatuses((current) =>
+      current.includes(status) ? current.filter((item) => item !== status) : [...current, status]
+    );
+  }
+
   async function syncFromJira() {
     setSyncing(true);
     setSyncStatus(null);
@@ -1058,6 +1118,16 @@ export default function App() {
           <strong>{fmtDate(TODAY_KEY, { month: "long", day: "numeric", year: "numeric" })}</strong>
         </div>
       </div>
+
+      {viewMode !== "planned" ? (
+        <StatusFilterBar
+          statuses={availableJiraStatuses}
+          selected={selectedJiraStatuses}
+          onToggle={toggleJiraStatus}
+          onSelectAll={() => setSelectedJiraStatuses(availableJiraStatuses)}
+          onClearAll={() => setSelectedJiraStatuses([])}
+        />
+      ) : null}
 
       {loading ? (
         <section className="loading-panel">
@@ -1210,7 +1280,12 @@ export default function App() {
             </div>
             <div className="timeline-body member-timeline-body">
               {TEAM_MEMBERS.map((member) => {
-                const memberItems = assignments.filter((item) => item.memberId === member.id && (showDone || !item.isDone));
+                const memberItems = assignments.filter((item) => {
+                  if (item.memberId !== member.id) return false;
+                  if (!showDone && item.isDone) return false;
+                  if (item.fromJira && !selectedJiraStatuses.includes(item.status || "")) return false;
+                  return true;
+                });
                 return (
                   <MemberRoadmap
                     key={member.id}
