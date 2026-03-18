@@ -418,8 +418,8 @@ function MemberRoadmap({ member, items, days, onEditTask }) {
           {planned.length ? (
             <div className="roadmap-lane">
               <div className="roadmap-lane-label">
-                <strong>Project work</strong>
-                <span>Project item, duration, and delivery window</span>
+                <strong>Project delivery</strong>
+                <span>Feature or build work owned by this developer</span>
               </div>
               <div className="roadmap-lane-items">
                 {planned.map((item) => (
@@ -432,8 +432,8 @@ function MemberRoadmap({ member, items, days, onEditTask }) {
           {ops.length ? (
             <div className="roadmap-lane ops-lane">
               <div className="roadmap-lane-label">
-                <strong>Operational pull</strong>
-                <span>Daily Jira work interrupting project delivery</span>
+                <strong>Operational interruptions</strong>
+                <span>Support, fixes, testing, or release work interrupting delivery</span>
               </div>
               <div className="roadmap-lane-items">
                 {ops.map((item) => (
@@ -1171,7 +1171,7 @@ export default function App() {
                 <span><i className="legend-chip ops" /> Operational</span>
                 <span><i className="legend-chip milestone" /> Milestone</span>
               </div>
-              <p>Grouped by team member so you can see where operational work is competing with project delivery and when those distractions land.</p>
+              <p>Built for web development teams: the left side shows item context and timing, while the right side shows the delivery window and operational interruptions on a shared calendar.</p>
             </div>
             <div className="timeline-months">
               {timelineMonths.map((month) => (
@@ -1187,6 +1187,15 @@ export default function App() {
                   <strong>{day.getDate()}</strong>
                 </div>
               ))}
+            </div>
+            <div className="gantt-table-head">
+              <div className="gantt-table-head-meta">
+                <span>Type</span>
+                <span>Work Item</span>
+                <span>Timing</span>
+                <span>Status / Link</span>
+              </div>
+              <div className="gantt-table-head-track">Timeline</div>
             </div>
             <div className="timeline-body member-timeline-body">
               {TEAM_MEMBERS.map((member) => {

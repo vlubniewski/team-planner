@@ -1074,6 +1074,36 @@ button:disabled {
   overflow: auto;
 }
 
+.gantt-table-head {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 0 14px 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.gantt-table-head-meta {
+  display: grid;
+  grid-template-columns: 90px minmax(190px, 1.4fr) minmax(160px, 1fr) minmax(150px, 0.9fr);
+  gap: 12px;
+  min-width: 520px;
+  flex: 0 0 520px;
+}
+
+.gantt-table-head span,
+.gantt-table-head-track {
+  color: #6c7f96;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gantt-table-head-track {
+  flex: 1;
+}
+
 .timeline-day {
   min-width: 34px;
   padding: 8px 6px;
@@ -1462,6 +1492,18 @@ button:disabled {
 
   .timeline-row-table {
     grid-template-columns: 1fr;
+  }
+
+  .gantt-table-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .gantt-table-head-meta {
+    grid-template-columns: 1fr;
+    min-width: 0;
+    flex: 1 1 auto;
+    width: 100%;
   }
 
   .team-card-grid {
