@@ -117,6 +117,15 @@ function SectionCard({ eyebrow, title, action, children, className = "" }) {
   );
 }
 
+function InfoHint({ label, text }) {
+  return (
+    <span className="info-hint" tabIndex={0}>
+      {label}
+      <span className="info-tooltip">{text}</span>
+    </span>
+  );
+}
+
 function PriorityPill({ item, onClick }) {
   return (
     <button className="priority-pill" onClick={() => onClick(item)} style={{ "--pill-accent": item.color }}>
@@ -292,6 +301,20 @@ export default function App() {
   const nextId = useRef(300);
   const saveTimer = useRef(null);
   const timelineDays = useMemo(() => buildTimelineDays(), []);
+  const timelineMonths = useMemo(() => {
+    const groups = [];
+    timelineDays.forEach((day) => {
+      const key = `${day.getFullYear()}-${day.getMonth()}`;
+      const label = day.toLocaleDateString("en-US", { month: "short" });
+      const existing = groups[groups.length - 1];
+      if (existing && existing.key === key) {
+        existing.count += 1;
+      } else {
+        groups.push({ key, label, count: 1 });
+      }
+    });
+    return groups;
+  }, [timelineDays]);
 
   useEffect(() => {
     try {
@@ -701,14 +724,25 @@ export default function App() {
       <header className="hero">
         <div className="hero-copy">
           <span className="hero-badge">Team Planner</span>
-          <h1>Leadership view for projects, priorities, and Jira-driven operational work.</h1>
-          <p>
-            Use this dashboard to answer three questions quickly: what the team is delivering, where operational work is
-            pulling attention, and what needs management intervention next.
-          </p>
+          <h1>Leadership board for delivery, priorities, and Jira operations.</h1>
+          <p>See the team at a glance, spot delivery risk early, and keep project work visible beside operational pull.</p>
         </div>
 
         <div className="hero-actions">
+          <div className="hero-mini-board">
+            <div>
+              <span>Projects in motion</span>
+              <strong>{summary.planned}</strong>
+            </div>
+            <div>
+              <span>Ops in motion</span>
+              <strong>{summary.activeOps}</strong>
+            </div>
+            <div>
+              <span>Upcoming priorities</span>
+              <strong>{nextPriorities.length}</strong>
+            </div>
+          </div>
           <SaveStatus status={saveStatus} />
           <button className="secondary-button" onClick={() => setShowDone((current) => !current)}>
             {showDone ? "Hide completed" : "Show completed"}
@@ -784,7 +818,18 @@ export default function App() {
             )}
           </SectionCard>
 
-          <SectionCard eyebrow="Management signals" title="Where attention is needed now">
+          <SectionCard
+            eyebrow="Management signals"
+            title={
+              <>
+                Where attention is needed now{" "}
+                <InfoHint
+                  label="?"
+                  text='Risk means either overdue Jira work or a teammate carrying a heavy mix of active work that could cause slippage.'
+                />
+              </>
+            }
+          >
             <div className="signals-grid">
               <div className="signal-card warn">
                 <span>Operational risk</span>
@@ -804,7 +849,19 @@ export default function App() {
             </div>
           </SectionCard>
 
-          <SectionCard eyebrow="Team management" title="Capacity and focus by person" className="wide">
+          <SectionCard
+            eyebrow="Team management"
+            title={
+              <>
+                Capacity and focus by person{" "}
+                <InfoHint
+                  label="?"
+                  text='Risk on each person card is driven by overdue Jira tickets plus the number of active planned and operational items assigned to them.'
+                />
+              </>
+            }
+            className="wide"
+          >
             <div className="team-grid">
               {teamMetrics.map((metrics) => (
                 <TeamLoadCard key={metrics.member.id} member={metrics.member} metrics={metrics} onAddPlanned={openNewTask} />
@@ -860,7 +917,22 @@ export default function App() {
             )}
           </SectionCard>
 
-          <SectionCard eyebrow="Timeline" title="60-day roadmap at a glance" className="wide">
+          <SectionCard eyebrow="Gantt view" title="60-day delivery map" className="wide">
+            <div className="gantt-meta">
+              <div className="gantt-legend">
+                <span><i className="legend-chip planned" /> Planned</span>
+                <span><i className="legend-chip ops" /> Operational</span>
+                <span><i className="legend-chip milestone" /> Milestone</span>
+              </div>
+              <p>Projects, operations, and milestones share one visual timeline so leadership can spot overlap and pressure quickly.</p>
+            </div>
+            <div className="timeline-months">
+              {timelineMonths.map((month) => (
+                <div key={month.key} style={{ gridColumn: `span ${month.count}` }}>
+                  {month.label}
+                </div>
+              ))}
+            </div>
             <div className="timeline-header">
               {timelineDays.map((day) => (
                 <div key={dateKey(day)} className={`timeline-day ${dateKey(day) === TODAY_KEY ? "today" : ""}`}>
