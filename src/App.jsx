@@ -137,6 +137,80 @@ function PriorityPill({ item, onClick }) {
   );
 }
 
+function buildCalendarWeeks(anchorDate) {
+  const monthStart = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1);
+  const monthEnd = new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0);
+  const gridStart = addDays(monthStart, -monthStart.getDay());
+  const gridEnd = addDays(monthEnd, 6 - monthEnd.getDay());
+  const weeks = [];
+  let currentWeek = [];
+
+  for (let cursor = new Date(gridStart); cursor <= gridEnd; cursor = addDays(cursor, 1)) {
+    currentWeek.push(new Date(cursor));
+    if (currentWeek.length === 7) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+  }
+
+  return weeks;
+}
+
+function MilestoneCalendar({ milestones, onEdit }) {
+  const calendarMonths = [0, 1].map((offset) => new Date(TODAY.getFullYear(), TODAY.getMonth() + offset, 1));
+
+  return (
+    <div className="calendar-view">
+      {calendarMonths.map((month) => {
+        const weeks = buildCalendarWeeks(month);
+        const monthKey = `${month.getFullYear()}-${month.getMonth()}`;
+
+        return (
+          <div key={monthKey} className="calendar-month">
+            <div className="calendar-month-title">
+              {month.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+            </div>
+            <div className="calendar-grid calendar-weekdays">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => (
+                <div key={label}>{label}</div>
+              ))}
+            </div>
+            <div className="calendar-body">
+              {weeks.map((week, index) => (
+                <div key={`${monthKey}-${index}`} className="calendar-grid">
+                  {week.map((day) => {
+                    const dayKey = dateKey(day);
+                    const dayMilestones = milestones.filter((item) => item.startKey === dayKey);
+                    const outsideMonth = day.getMonth() !== month.getMonth();
+
+                    return (
+                      <div key={dayKey} className={`calendar-day ${outsideMonth ? "muted" : ""} ${dayKey === TODAY_KEY ? "today" : ""}`}>
+                        <div className="calendar-day-number">{day.getDate()}</div>
+                        <div className="calendar-events">
+                          {dayMilestones.map((item) => (
+                            <button
+                              key={item.id}
+                              className="calendar-event"
+                              style={{ "--event-color": item.jiraKey || "#db2777" }}
+                              onClick={() => onEdit(item)}
+                            >
+                              {item.title}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function TeamLoadCard({ member, metrics, onAddPlanned }) {
   return (
     <div className="team-card">
@@ -332,7 +406,10 @@ function TaskTable({ title, items, emptyCopy, onEdit }) {
               <button key={item.id} className={`task-row ${overdue ? "overdue" : ""}`} onClick={() => onEdit(item)}>
                 <div>
                   <strong>{item.title}</strong>
-                  <span>{member ? member.name : "Team-wide"}</span>
+                  <span>
+                    {member ? member.name : "Team-wide"}
+                    {item.fromJira && item.status ? ` · ${item.status}` : ""}
+                  </span>
                 </div>
                 <div className="task-row-meta">
                   {item.fromJira ? (
@@ -536,6 +613,19 @@ export default function App() {
     [visibleAssignments]
   );
   const opsItems = useMemo(() => visibleAssignments.filter((item) => item.fromJira && !item.isDone), [visibleAssignments]);
+  const activelyInProgressOps = useMemo(
+    () =>
+      opsItems
+        .filter((item) =>
+          ["In Progress", "Testing", "Ready for Release", "Selected for Development", "Ready to Work"].includes(item.status || "")
+        )
+        .sort((a, b) => {
+          const aKey = a.dueDateKey || "9999-12-31";
+          const bKey = b.dueDateKey || "9999-12-31";
+          return aKey.localeCompare(bKey);
+        }),
+    [opsItems]
+  );
   const doneRecently = useMemo(() => assignments.filter((item) => item.fromJira && item.isDone), [assignments]);
   const overdueOps = useMemo(
     () => assignments.filter((item) => item.fromJira && !item.isDone && item.dueDateKey && item.dueDateKey < TODAY_KEY),
@@ -972,11 +1062,11 @@ export default function App() {
             />
           </SectionCard>
 
-          <SectionCard eyebrow="Operational execution" title="Active Jira work">
+          <SectionCard eyebrow="Operational execution" title="Active Jira work in progress">
             <TaskTable
-              title="Operational tickets"
-              items={opsItems}
-              emptyCopy="No active Jira tickets are visible in this view."
+              title="In-progress operational tickets"
+              items={activelyInProgressOps}
+              emptyCopy="No Jira tickets are currently in an active in-progress state."
               onEdit={openTask}
             />
           </SectionCard>
@@ -992,20 +1082,7 @@ export default function App() {
 
           <SectionCard eyebrow="Milestones" title="Dates the team is working toward">
             {milestones.length ? (
-              <div className="milestone-list">
-                {milestones.map((milestone) => (
-                  <button key={milestone.id} className="milestone-item" onClick={() => openMilestone(milestone)}>
-                    <span className="milestone-dot" style={{ background: milestone.jiraKey }} />
-                    <div>
-                      <strong>{milestone.title}</strong>
-                      <span>
-                        {fmtDate(milestone.startKey, { month: "long", day: "numeric", year: "numeric" })} ·{" "}
-                        {MILESTONE_LEGEND[milestone.jiraKey] || "Other"}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
+              <MilestoneCalendar milestones={milestones} onEdit={openMilestone} />
             ) : (
               <p className="empty-copy">Add milestone markers so project delivery and operational work share the same timeline context.</p>
             )}
