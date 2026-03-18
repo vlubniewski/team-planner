@@ -1051,24 +1051,26 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="hero">
+      <header className="hero gantt-hero">
         <div className="hero-copy">
           <span className="hero-badge">Team Planner</span>
+          <h1>60-day delivery map</h1>
+          <p>Project work, operational distractions, and milestones in one focused Gantt view.</p>
         </div>
 
         <div className="hero-actions">
           <div className="hero-mini-board">
             <div>
-              <span>Projects in motion</span>
+              <span>Planned work</span>
               <strong>{summary.planned}</strong>
             </div>
             <div>
-              <span>Ops in motion</span>
+              <span>Operational work</span>
               <strong>{summary.activeOps}</strong>
             </div>
             <div>
-              <span>Upcoming priorities</span>
-              <strong>{nextPriorities.length}</strong>
+              <span>Milestones</span>
+              <strong>{milestones.length}</strong>
             </div>
           </div>
           <SaveStatus status={saveStatus} />
@@ -1135,126 +1137,8 @@ export default function App() {
           <p>Loading team work, saved plans, and Jira sync data...</p>
         </section>
       ) : (
-        <main className="dashboard-grid">
-          <SectionCard
-            eyebrow="Upcoming priorities"
-            title="What management should line up next"
-            action={
-              <button className="ghost-button" onClick={openNewPriority}>
-                Add priority
-              </button>
-            }
-          >
-            {initiatives.length ? (
-              <div className="priority-list">
-                {initiatives.map((item) => (
-                  <PriorityPill key={item.id} item={item} onClick={openPriority} />
-                ))}
-              </div>
-            ) : (
-              <p className="empty-copy">Add upcoming priorities so the team can distinguish current work from what is coming next.</p>
-            )}
-          </SectionCard>
-
-          <SectionCard
-            eyebrow="Management signals"
-            title={
-              <>
-                Where attention is needed now{" "}
-                <InfoHint
-                  label="?"
-                  text='Risk means either overdue Jira work or a teammate carrying a heavy mix of active work that could cause slippage.'
-                />
-              </>
-            }
-          >
-            <div className="signals-grid">
-              <div className="signal-card warn">
-                <span>Operational risk</span>
-                <strong>{overdueOps.length}</strong>
-                <p>{overdueOps.length ? "Jira tickets are overdue and may need intervention." : "No overdue Jira work right now."}</p>
-              </div>
-              <div className="signal-card calm">
-                <span>Milestones</span>
-                <strong>{milestones.length}</strong>
-                <p>{milestones.length ? "Key dates are being tracked on the calendar." : "No milestone markers have been added yet."}</p>
-              </div>
-              <div className="signal-card">
-                <span>Next priorities</span>
-                <strong>{nextPriorities.length}</strong>
-                <p>{nextPriorities.length ? "Upcoming items are captured for handoff and planning." : "No upcoming priorities are documented yet."}</p>
-              </div>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            eyebrow="Work by team member"
-            title="What each person is actively working on"
-            className="wide"
-          >
-            <div className="member-work-grid">
-              {memberWorkView.map(({ member, projects, ops }) => (
-                <MemberWorkBoard key={member.id} member={member} projects={projects} opsItems={ops} onEditTask={openTask} />
-              ))}
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            eyebrow="Team management"
-            title={
-              <>
-                Capacity and focus by person{" "}
-                <InfoHint
-                  label="?"
-                  text='Risk on each person card is driven by overdue Jira tickets plus the number of active planned and operational items assigned to them.'
-                />
-              </>
-            }
-            className="wide"
-          >
-            <div className="team-grid">
-              {teamMetrics.map((metrics) => (
-                <TeamLoadCard key={metrics.member.id} member={metrics.member} metrics={metrics} onAddPlanned={openNewTask} />
-              ))}
-            </div>
-          </SectionCard>
-
-          <SectionCard eyebrow="Project delivery" title="Planned project work">
-            <TaskTable
-              title="Planned items"
-              items={plannedItems}
-              emptyCopy="No planned project items are visible in this view."
-              onEdit={openTask}
-            />
-          </SectionCard>
-
-          <SectionCard eyebrow="Operational execution" title="Active Jira work in progress">
-            <TaskTable
-              title="In-progress operational tickets"
-              items={activelyInProgressOps}
-              emptyCopy="No Jira tickets are currently in an active in-progress state."
-              onEdit={openTask}
-            />
-          </SectionCard>
-
-          <SectionCard eyebrow="Completed recently" title="Last 30 days from Jira">
-            <TaskTable
-              title="Done or deployed"
-              items={doneRecently.slice(0, 8)}
-              emptyCopy="No completed Jira tickets are available right now."
-              onEdit={openTask}
-            />
-          </SectionCard>
-
-          <SectionCard eyebrow="Milestones" title="Dates the team is working toward">
-            {milestones.length ? (
-              <MilestoneCalendar milestones={milestones} onEdit={openMilestone} />
-            ) : (
-              <p className="empty-copy">Add milestone markers so project delivery and operational work share the same timeline context.</p>
-            )}
-          </SectionCard>
-
-          <SectionCard eyebrow="Gantt view" title="60-day delivery distraction map" className="wide">
+        <main className="gantt-only-layout">
+          <SectionCard eyebrow="Gantt view" title="60-day delivery map" className="wide gantt-panel">
             <div className="gantt-meta">
               <div className="gantt-legend">
                 <span><i className="legend-chip planned" /> Planned</span>

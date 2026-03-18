@@ -220,6 +220,16 @@ button:disabled {
   border: 1px solid #fecaca;
 }
 
+.gantt-only-layout {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.gantt-panel {
+  min-height: 60vh;
+}
+
 .summary-grid,
 .dashboard-grid {
   display: grid;
