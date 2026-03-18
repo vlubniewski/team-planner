@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { requireAuth } from './_auth.js';
 
 const supabase = createClient(
   "https://xhtzvzquzqguqrxaetyz.supabase.co",
@@ -6,6 +7,8 @@ const supabase = createClient(
 );
 
 export default async function handler(req, res) {
+  if (!requireAuth(req, res)) return;
+
   if (req.method === 'GET') {
     const { data, error } = await supabase.from('assignments').select('*');
     if (error) return res.status(500).json({ error: error.message });

@@ -1,4 +1,8 @@
+import { requireAuth } from "./_auth.js";
+
 export default async function handler(req, res) {
+  if (!requireAuth(req, res)) return;
+
   const { JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY } = process.env;
   const domain = process.env.VITE_JIRA_DOMAIN;
 

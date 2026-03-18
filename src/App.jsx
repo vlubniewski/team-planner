@@ -403,6 +403,11 @@ function GanttBoard({ members, assignments, milestones, days, showDone, selected
 
 export default function App() {
   useIsMobile();
+  const [authStatus, setAuthStatus] = useState("checking");
+  const [authConfigured, setAuthConfigured] = useState(true);
+  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [loginError, setLoginError] = useState("");
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -457,6 +462,33 @@ export default function App() {
   }, [nextPriorities]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function checkSession() {
+      try {
+        const response = await fetch("/api/session");
+        const data = await response.json();
+        if (cancelled) return;
+        setAuthConfigured(data.authConfigured);
+        setAuthStatus(data.authenticated ? "authenticated" : "unauthenticated");
+      } catch (error) {
+        console.error("Session check failed", error);
+        if (!cancelled) {
+          setAuthConfigured(true);
+          setAuthStatus("unauthenticated");
+        }
+      }
+    }
+
+    checkSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+
     let cancelled = false;
 
     async function load() {
@@ -546,7 +578,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authStatus]);
 
   const availableJiraStatuses = useMemo(
     () => [...new Set(assignments.filter((item) => item.fromJira).map((item) => item.status).filter(Boolean))].sort(),
@@ -845,6 +877,91 @@ export default function App() {
     }
   }
 
+  async function handleLogin(event) {
+    event.preventDefault();
+    setLoginSubmitting(true);
+    setLoginError("");
+
+    try {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(loginForm),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Login failed");
+      }
+
+      setAuthStatus("authenticated");
+      setLoginForm({ username: "", password: "" });
+    } catch (error) {
+      setLoginError(error.message);
+    } finally {
+      setLoginSubmitting(false);
+    }
+  }
+
+  async function handleLogout() {
+    await fetch("/api/logout", { method: "POST" });
+    setAssignments([]);
+    setAuthStatus("unauthenticated");
+  }
+
+  if (authStatus === "checking") {
+    return (
+      <div className="pm-app">
+        <section className="loading-panel">
+          <div className="spinner" />
+          <p>Checking secure access...</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (authStatus !== "authenticated") {
+    return (
+      <div className="pm-app auth-app">
+        <section className="auth-card">
+          <div className="pm-badge">Secure access</div>
+          <h1>Sign in to Team Planner</h1>
+          <p>
+            Use the application credentials to access portfolio planning, Jira operational data, and saved assignments.
+          </p>
+          {!authConfigured ? (
+            <div className="auth-warning">
+              `APP_LOGIN_USER` and `APP_LOGIN_PASSWORD` are not configured yet, so the app cannot validate a login.
+            </div>
+          ) : null}
+          <form className="auth-form" onSubmit={handleLogin}>
+            <label>
+              <span>Username</span>
+              <input
+                value={loginForm.username}
+                onChange={(event) => setLoginForm((current) => ({ ...current, username: event.target.value }))}
+                autoComplete="username"
+              />
+            </label>
+            <label>
+              <span>Password</span>
+              <input
+                type="password"
+                value={loginForm.password}
+                onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
+                autoComplete="current-password"
+              />
+            </label>
+            {loginError ? <div className="auth-error">{loginError}</div> : null}
+            <button className="primary-button" type="submit" disabled={loginSubmitting || !authConfigured}>
+              {loginSubmitting ? "Signing in..." : "Sign in"}
+            </button>
+          </form>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="pm-app">
       <header className="pm-topbar">
@@ -855,6 +972,9 @@ export default function App() {
         </div>
         <div className="pm-actions">
           <SaveStatus status={saveStatus} />
+          <button className="ghost-button" onClick={handleLogout}>
+            Log out
+          </button>
           <button className="ghost-button" onClick={() => setShowDone((current) => !current)}>
             {showDone ? "Hide completed" : "Show completed"}
           </button>
