@@ -125,13 +125,21 @@ function InitiativeCard({ item, owner, opsCount, onEdit }) {
 }
 
 function TeamCard({ member, projects, opsItems, onEditTask }) {
-  const activeOps = opsItems.filter((item) => !item.isDone);
+  const [open, setOpen] = useState(member.id === 1);
+  const activeOps = opsItems
+    .filter((item) => !item.isDone)
+    .sort((a, b) => {
+      const aKey = a.dueDateKey || "9999-12-31";
+      const bKey = b.dueDateKey || "9999-12-31";
+      return aKey.localeCompare(bKey);
+    });
   const atRisk = activeOps.filter((item) => item.dueDateKey && item.dueDateKey < TODAY_KEY);
 
   return (
-    <div className="team-card">
-      <div className="team-card-head">
+    <div className={`team-card assignee-card ${open ? "open" : ""}`}>
+      <button className="team-card-head assignee-head" onClick={() => setOpen((current) => !current)}>
         <div className="person-lockup">
+          <span className="assignee-caret">{open ? "▾" : "▸"}</span>
           <div className="avatar" style={{ "--avatar-accent": member.color }}>
             {member.initials}
           </div>
@@ -145,50 +153,52 @@ function TeamCard({ member, projects, opsItems, onEditTask }) {
           <span>{activeOps.length} ops</span>
           <span>{atRisk.length} at risk</span>
         </div>
-      </div>
+      </button>
 
-      <div className="team-columns">
-        <div className="team-column">
-          <div className="team-column-head">
-            <strong>Project work</strong>
-            <span>Planned delivery commitments</span>
-          </div>
-          {projects.length ? (
-            <div className="team-list">
-              {projects.map((item) => (
-                <button key={item.id} className="team-list-item" onClick={() => onEditTask(item)}>
-                  <strong>{item.title}</strong>
-                  <span>{fmtRange(item.startKey, item.endKey)}</span>
-                </button>
-              ))}
+      {open ? (
+        <div className="assignee-body">
+          <div className="project-block">
+            <div className="team-column-head">
+              <strong>Project block</strong>
+              <span>Project-level work owned by this developer</span>
             </div>
-          ) : (
-            <p className="empty-copy">No planned project delivery assigned.</p>
-          )}
-        </div>
+            {projects.length ? (
+              <div className="team-list">
+                {projects.map((item) => (
+                  <button key={item.id} className="team-list-item project-block-item" onClick={() => onEditTask(item)}>
+                    <strong>{item.title}</strong>
+                    <span>{fmtRange(item.startKey, item.endKey)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-copy">No project-level delivery assigned.</p>
+            )}
+          </div>
 
-        <div className="team-column ops">
-          <div className="team-column-head">
-            <strong>Operational load</strong>
-            <span>Jira work that can interrupt delivery</span>
-          </div>
-          {activeOps.length ? (
-            <div className="team-list">
-              {activeOps.map((item) => (
-                <button key={item.id} className="team-list-item ops" onClick={() => onEditTask(item)}>
-                  <strong>{item.title}</strong>
-                  <span>
-                    {item.status || "Operational"}
-                    {item.dueDateKey ? ` · Due ${fmtDate(item.dueDateKey)}` : ""}
-                  </span>
-                </button>
-              ))}
+          <div className="ops-block">
+            <div className="team-column-head">
+              <strong>Operational items</strong>
+              <span>Sorted in chronological due date order</span>
             </div>
-          ) : (
-            <p className="empty-copy">No operational work selected in current filters.</p>
-          )}
+            {activeOps.length ? (
+              <div className="team-list">
+                {activeOps.map((item) => (
+                  <button key={item.id} className="team-list-item ops" onClick={() => onEditTask(item)}>
+                    <strong>{item.title}</strong>
+                    <span>
+                      {item.status || "Operational"}
+                      {item.dueDateKey ? ` · Due ${fmtDate(item.dueDateKey)}` : " · No due date"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-copy">No operational work selected in current filters.</p>
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

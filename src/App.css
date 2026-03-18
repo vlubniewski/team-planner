@@ -503,7 +503,7 @@ button:disabled {
 }
 
 .team-grid {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .team-card {
@@ -511,6 +511,11 @@ button:disabled {
   border-radius: 24px;
   background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
   border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.assignee-card {
+  padding: 0;
+  overflow: hidden;
 }
 
 .team-card-head,
@@ -533,8 +538,21 @@ button:disabled {
   align-items: flex-start;
 }
 
+.assignee-head {
+  width: 100%;
+  padding: 18px;
+  background: transparent;
+  border-radius: 0;
+}
+
 .person-lockup {
   align-items: center;
+}
+
+.assignee-caret {
+  color: #6c7f96;
+  font-size: 1rem;
+  font-weight: 800;
 }
 
 .avatar {
@@ -568,6 +586,30 @@ button:disabled {
   margin-top: 16px;
 }
 
+.assignee-body {
+  display: grid;
+  gap: 14px;
+  padding: 0 18px 18px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.project-block,
+.ops-block {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 20px;
+  background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.project-block {
+  background: linear-gradient(180deg, #fffaf5 0%, #ffffff 100%);
+}
+
+.ops-block {
+  background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%);
+}
+
 .team-column {
   flex: 1;
   padding: 14px;
@@ -598,6 +640,10 @@ button:disabled {
 
 .team-list-item.ops {
   border-left: 4px solid #2563eb;
+}
+
+.project-block-item {
+  border-left: 4px solid #f97316;
 }
 
 .jira-board {
