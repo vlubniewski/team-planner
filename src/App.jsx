@@ -44,6 +44,13 @@ function fmtRange(startKey, endKey) {
   return `${fmtDate(startKey)} - ${fmtDate(endKey)}`;
 }
 
+function diffDays(startKey, endKey) {
+  if (!startKey || !endKey) return null;
+  const start = new Date(`${startKey}T12:00:00`);
+  const end = new Date(`${endKey}T12:00:00`);
+  return Math.max(1, Math.round((end - start) / 86400000) + 1);
+}
+
 function buildTimelineDays() {
   const days = [];
   const start = new Date(TODAY.getFullYear(), TODAY.getMonth(), 1);
@@ -312,30 +319,62 @@ function TimelineRow({ item, days, onEdit }) {
   const safeEnd = endIndex >= safeStart ? endIndex : safeStart;
   const span = Math.max(1, safeEnd - safeStart + 1);
   const type = getAssignmentType(item);
+  const durationDays = item.startKey && item.endKey ? diffDays(item.startKey, item.endKey) : null;
+  const primaryDate = item.fromJira
+    ? item.isDone && item.resolvedKey
+      ? `Completed ${fmtDate(item.resolvedKey)}`
+      : item.dueDateKey
+        ? `Due ${fmtDate(item.dueDateKey)}`
+        : "No due date"
+    : fmtRange(item.startKey, item.endKey);
+  const secondaryMeta = item.fromJira
+    ? item.status || "Operational"
+    : durationDays
+      ? `${durationDays} day${durationDays === 1 ? "" : "s"}`
+      : "Planned item";
+  const rowLabel = type === "planned" ? "Project" : type === "ops" ? "Ops" : "Milestone";
 
   return (
     <button className={`timeline-row ${type}`} onClick={() => onEdit(item)}>
       <div className="timeline-row-copy">
-        <strong>{item.title}</strong>
-        <span>
-          {item.fromJira ? `${item.jiraKey || "Jira"}${item.status ? ` · ${item.status}` : ""}` : fmtRange(item.startKey, item.endKey)}
-        </span>
-        {item.fromJira ? (
-          <div className="timeline-row-submeta">
-            <span>{item.isDone && item.resolvedKey ? `Completed ${fmtDate(item.resolvedKey)}` : item.dueDateKey ? `Due ${fmtDate(item.dueDateKey)}` : "No due date"}</span>
-            {item.jiraKey ? (
-              <a
-                href={`${JIRA_BASE}/${item.jiraKey}`}
-                target="_blank"
-                rel="noreferrer"
-                className="timeline-link"
-                onClick={(event) => event.stopPropagation()}
-              >
-                Open in Jira
-              </a>
-            ) : null}
+        <div className="timeline-row-table">
+          <div className="timeline-cell timeline-kind">
+            <span className={`timeline-pill ${type}`}>{rowLabel}</span>
           </div>
-        ) : null}
+          <div className="timeline-cell timeline-name">
+            <strong>{item.title}</strong>
+            <span>{item.fromJira ? item.jiraKey || "Jira item" : "Planned delivery item"}</span>
+          </div>
+          <div className="timeline-cell timeline-dates">
+            <strong>{primaryDate}</strong>
+            <span>{secondaryMeta}</span>
+          </div>
+          <div className="timeline-cell timeline-state">
+            {item.fromJira ? (
+              <>
+                <strong>{item.status || "Operational"}</strong>
+                {item.jiraKey ? (
+                  <a
+                    href={`${JIRA_BASE}/${item.jiraKey}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="timeline-link"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    Open in Jira
+                  </a>
+                ) : (
+                  <span>No Jira link</span>
+                )}
+              </>
+            ) : (
+              <>
+                <strong>{durationDays ? `${durationDays} days` : "No duration"}</strong>
+                <span>{item.startKey ? fmtRange(item.startKey, item.endKey) : "Needs dates"}</span>
+              </>
+            )}
+          </div>
+        </div>
       </div>
       <div className="timeline-track">
         <div className="timeline-bar" style={{ left: `${(safeStart / days.length) * 100}%`, width: `${(span / days.length) * 100}%` }} />
@@ -380,7 +419,7 @@ function MemberRoadmap({ member, items, days, onEditTask }) {
             <div className="roadmap-lane">
               <div className="roadmap-lane-label">
                 <strong>Project work</strong>
-                <span>Manual items tied to delivery</span>
+                <span>Project item, duration, and delivery window</span>
               </div>
               <div className="roadmap-lane-items">
                 {planned.map((item) => (
@@ -394,6 +433,7 @@ function MemberRoadmap({ member, items, days, onEditTask }) {
             <div className="roadmap-lane ops-lane">
               <div className="roadmap-lane-label">
                 <strong>Operational pull</strong>
+                <span>Daily Jira work interrupting project delivery</span>
               </div>
               <div className="roadmap-lane-items">
                 {ops.map((item) => (

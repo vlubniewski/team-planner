@@ -1097,7 +1097,10 @@ button:disabled {
 }
 
 .timeline-row {
-  gap: 20px;
+  gap: 18px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: #ffffff;
 }
 
 .member-timeline-body {
@@ -1109,6 +1112,7 @@ button:disabled {
   border-radius: 24px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .member-roadmap-head {
@@ -1146,6 +1150,7 @@ button:disabled {
   padding: 14px;
   border-radius: 20px;
   background: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .ops-lane {
@@ -1190,15 +1195,68 @@ button:disabled {
 }
 
 .timeline-row-copy {
-  min-width: 260px;
+  min-width: 520px;
+  flex: 0 0 520px;
 }
 
-.timeline-row-submeta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin-top: 8px;
+.timeline-row-table {
+  display: grid;
+  grid-template-columns: 90px minmax(190px, 1.4fr) minmax(160px, 1fr) minmax(150px, 0.9fr);
+  gap: 12px;
   align-items: center;
+}
+
+.timeline-cell {
+  min-width: 0;
+}
+
+.timeline-kind {
+  display: flex;
+  align-items: center;
+}
+
+.timeline-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.timeline-pill.planned {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.timeline-pill.ops {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.timeline-pill.milestone {
+  background: #fdf2f8;
+  color: #be185d;
+}
+
+.timeline-name strong,
+.timeline-dates strong,
+.timeline-state strong {
+  display: block;
+  color: #10233f;
+}
+
+.timeline-name span,
+.timeline-dates span,
+.timeline-state span {
+  display: block;
+  margin-top: 4px;
+  color: #6c7f96;
+  font-size: 0.84rem;
 }
 
 .timeline-link {
@@ -1212,9 +1270,10 @@ button:disabled {
 .timeline-track {
   position: relative;
   flex: 1;
-  height: 14px;
+  height: 16px;
   border-radius: 999px;
   background: #e2e8f0;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 .timeline-bar {
@@ -1223,6 +1282,7 @@ button:disabled {
   bottom: 0;
   min-width: 14px;
   border-radius: inherit;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.16);
 }
 
 .modal-backdrop {
@@ -1397,10 +1457,11 @@ button:disabled {
   .timeline-track {
     width: 100%;
     min-width: 0;
+    flex: 1 1 auto;
   }
 
-  .timeline-row-submeta {
-    align-items: flex-start;
+  .timeline-row-table {
+    grid-template-columns: 1fr;
   }
 
   .team-card-grid {
