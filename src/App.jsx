@@ -17,6 +17,28 @@ TODAY.setHours(0, 0, 0, 0);
 const TODAY_KEY = dateKey(TODAY);
 const ACTIVE_STATUSES = ["Ready to Work", "Selected for Development", "In Progress", "Testing", "Ready for Release"];
 
+function getRangeBounds(rangeKey) {
+  const year = TODAY.getFullYear();
+  if (rangeKey === "30d") {
+    return { start: dateKey(addDays(TODAY, -29)), end: TODAY_KEY, label: "Last 30 days" };
+  }
+  if (rangeKey === "ytd") {
+    return { start: `${year}-01-01`, end: TODAY_KEY, label: "Year to date" };
+  }
+  const quarterMap = {
+    q1: { start: `${year}-01-01`, end: `${year}-03-31`, label: `Q1 ${year}` },
+    q2: { start: `${year}-04-01`, end: `${year}-06-30`, label: `Q2 ${year}` },
+    q3: { start: `${year}-07-01`, end: `${year}-09-30`, label: `Q3 ${year}` },
+    q4: { start: `${year}-10-01`, end: `${year}-12-31`, label: `Q4 ${year}` },
+  };
+  return quarterMap[rangeKey] || { start: dateKey(addDays(TODAY, -29)), end: TODAY_KEY, label: "Last 30 days" };
+}
+
+function isWithinRange(key, start, end) {
+  if (!key) return false;
+  return key >= start && key <= end;
+}
+
 function dateKey(d) {
   return new Date(d).toISOString().slice(0, 10);
 }
@@ -416,6 +438,9 @@ export default function App() {
   const [viewMode, setViewMode] = useState("all");
   const [showDone, setShowDone] = useState(true);
   const [selectedJiraStatuses, setSelectedJiraStatuses] = useState([]);
+  const [dashboardRange, setDashboardRange] = useState("30d");
+  const [portfolioSort, setPortfolioSort] = useState("start");
+  const [teamSort, setTeamSort] = useState("ops");
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [showPriorityModal, setShowPriorityModal] = useState(false);
@@ -631,6 +656,26 @@ export default function App() {
     [assignments, milestones.length]
   );
 
+  const dashboardWindow = useMemo(() => getRangeBounds(dashboardRange), [dashboardRange]);
+
+  const dashboardMetrics = useMemo(
+    () => ({
+      plannedStarts: assignments.filter(
+        (item) => !item.fromJira && item.status !== "MILESTONE" && isWithinRange(item.startKey, dashboardWindow.start, dashboardWindow.end)
+      ).length,
+      opsCompleted: assignments.filter(
+        (item) => item.fromJira && item.isDone && isWithinRange(item.resolvedKey, dashboardWindow.start, dashboardWindow.end)
+      ).length,
+      dueInWindow: assignments.filter(
+        (item) => item.fromJira && !item.isDone && isWithinRange(item.dueDateKey, dashboardWindow.start, dashboardWindow.end)
+      ).length,
+      milestones: assignments.filter(
+        (item) => item.status === "MILESTONE" && isWithinRange(item.startKey, dashboardWindow.start, dashboardWindow.end)
+      ).length,
+    }),
+    [assignments, dashboardWindow]
+  );
+
   const portfolioItems = useMemo(
     () =>
       plannedItems
@@ -639,8 +684,19 @@ export default function App() {
           owner: TEAM_MEMBERS.find((member) => member.id === item.memberId),
           opsCount: assignments.filter((assignment) => assignment.memberId === item.memberId && assignment.fromJira && !assignment.isDone).length,
         }))
-        .sort((a, b) => (a.item.startKey || "9999-12-31").localeCompare(b.item.startKey || "9999-12-31")),
-    [assignments, plannedItems]
+        .sort((a, b) => {
+          if (portfolioSort === "owner") {
+            return (a.owner?.name || "").localeCompare(b.owner?.name || "");
+          }
+          if (portfolioSort === "risk") {
+            return b.opsCount - a.opsCount;
+          }
+          if (portfolioSort === "duration") {
+            return diffDays(b.item.startKey, b.item.endKey) - diffDays(a.item.startKey, a.item.endKey);
+          }
+          return (a.item.startKey || "9999-12-31").localeCompare(b.item.startKey || "9999-12-31");
+        }),
+    [assignments, plannedItems, portfolioSort]
   );
 
   const teamView = useMemo(
@@ -651,8 +707,12 @@ export default function App() {
         opsItems: assignments.filter(
           (item) => item.memberId === member.id && item.fromJira && selectedJiraStatuses.includes(item.status || "")
         ),
-      })),
-    [assignments, selectedJiraStatuses]
+      })).sort((a, b) => {
+        if (teamSort === "name") return a.member.name.localeCompare(b.member.name);
+        if (teamSort === "projects") return b.projects.length - a.projects.length;
+        return b.opsItems.filter((item) => !item.isDone).length - a.opsItems.filter((item) => !item.isDone).length;
+      }),
+    [assignments, selectedJiraStatuses, teamSort]
   );
 
   function updateAssignments(updater) {
@@ -968,7 +1028,6 @@ export default function App() {
         <div className="pm-brand">
           <span className="pm-badge">Portfolio planner</span>
           <h1>Delivery portfolio for web development</h1>
-          <p>Track delivery commitments, operational interruptions, milestones, and the 60-day program timeline in one place.</p>
         </div>
         <div className="pm-actions">
           <SaveStatus status={saveStatus} />
@@ -993,10 +1052,10 @@ export default function App() {
       {syncStatus ? <div className={`pm-banner ${syncStatus.type}`}>{syncStatus.message}</div> : null}
 
       <div className="pm-stats">
-        <StatCard label="Projects in motion" value={summary.planned} detail="Active planned delivery items" tone="blue" />
-        <StatCard label="Operational pull" value={summary.activeOps} detail="Active Jira items across the team" tone="orange" />
-        <StatCard label="Overdue ops" value={summary.overdueOps} detail="Operational items already past due" tone="red" />
-        <StatCard label="Milestones" value={summary.milestones} detail="Shared delivery checkpoints on the board" tone="purple" />
+        <StatCard label="Projects started" value={dashboardMetrics.plannedStarts} detail={dashboardWindow.label} tone="blue" />
+        <StatCard label="Ops completed" value={dashboardMetrics.opsCompleted} detail={dashboardWindow.label} tone="green" />
+        <StatCard label="Ops due" value={dashboardMetrics.dueInWindow} detail={dashboardWindow.label} tone="orange" />
+        <StatCard label="Milestones" value={dashboardMetrics.milestones} detail={dashboardWindow.label} tone="purple" />
       </div>
 
       <div className="pm-toolbar">
@@ -1014,6 +1073,42 @@ export default function App() {
         <div className="toolbar-date">
           <span>Today</span>
           <strong>{fmtDate(TODAY_KEY, { month: "long", day: "numeric", year: "numeric" })}</strong>
+        </div>
+      </div>
+
+      <div className="dashboard-controls">
+        <div className="segmented-control">
+          <button className={dashboardRange === "30d" ? "active" : ""} onClick={() => setDashboardRange("30d")}>
+            Last 30 days
+          </button>
+          <button className={dashboardRange === "q1" ? "active" : ""} onClick={() => setDashboardRange("q1")}>
+            Q1
+          </button>
+          <button className={dashboardRange === "q2" ? "active" : ""} onClick={() => setDashboardRange("q2")}>
+            Q2
+          </button>
+          <button className={dashboardRange === "ytd" ? "active" : ""} onClick={() => setDashboardRange("ytd")}>
+            YTD
+          </button>
+        </div>
+        <div className="sort-controls">
+          <label>
+            <span>Portfolio sort</span>
+            <select value={portfolioSort} onChange={(event) => setPortfolioSort(event.target.value)}>
+              <option value="start">Start date</option>
+              <option value="owner">Owner</option>
+              <option value="risk">Most ops pressure</option>
+              <option value="duration">Longest duration</option>
+            </select>
+          </label>
+          <label>
+            <span>Team sort</span>
+            <select value={teamSort} onChange={(event) => setTeamSort(event.target.value)}>
+              <option value="ops">Most ops load</option>
+              <option value="projects">Most project work</option>
+              <option value="name">Name</option>
+            </select>
+          </label>
         </div>
       </div>
 

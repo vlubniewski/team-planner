@@ -92,9 +92,9 @@
   display: flex;
   justify-content: space-between;
   gap: 24px;
-  align-items: flex-start;
-  padding: 24px;
-  border-radius: 28px;
+  align-items: center;
+  padding: 18px 20px;
+  border-radius: 22px;
 }
 
 .pm-brand {
@@ -127,15 +127,8 @@
 }
 
 .pm-brand h1 {
-  font-size: clamp(2rem, 4vw, 3.2rem);
-  line-height: 0.98;
-}
-
-.pm-brand p {
-  margin: 12px 0 0;
-  max-width: 60ch;
-  color: #5d728e;
-  font-size: 1rem;
+  font-size: clamp(1.4rem, 2.3vw, 2rem);
+  line-height: 1.04;
 }
 
 .pm-actions {
@@ -298,6 +291,10 @@ button:disabled {
   color: #c2410c;
 }
 
+.stat-card.green strong {
+  color: #15803d;
+}
+
 .stat-card.red strong {
   color: #b91c1c;
 }
@@ -312,6 +309,46 @@ button:disabled {
   align-items: center;
   gap: 14px;
   margin-top: 20px;
+}
+
+.dashboard-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.sort-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sort-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.sort-controls span {
+  color: #6c7f96;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sort-controls select {
+  min-width: 160px;
+  border: none;
+  background: transparent;
+  color: #10233f;
+  font-weight: 700;
 }
 
 .segmented-control {
@@ -1065,6 +1102,7 @@ button:disabled {
 
   .pm-topbar,
   .pm-toolbar,
+  .dashboard-controls,
   .pm-actions,
   .pm-section-head,
   .team-card-head,
