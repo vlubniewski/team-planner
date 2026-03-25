@@ -2,96 +2,108 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const TEAM_MEMBERS = [
-  { id: 1, name: "Ryan Geraghty", role: "Director, Software Development", color: "#2563eb", initials: "RG" },
-  { id: 2, name: "Michael Santilli", role: "Sr. Web Developer", color: "#0f766e", initials: "MS" },
+  { id: 1, name: "Ryan Geraghty", role: "Director, Software Development", color: "#0f766e", initials: "RG" },
+  { id: 2, name: "Michael Santilli", role: "Sr. Web Developer", color: "#2563eb", initials: "MS" },
   { id: 3, name: "John Kaeser", role: "Sr. Developer", color: "#c2410c", initials: "JK" },
   { id: 4, name: "Jason Moore", role: "Web Developer", color: "#7c3aed", initials: "JM" },
 ];
 
+const ACTIVE_STATUSES = ["Ready to Work", "Selected for Development", "In Progress", "Testing", "Ready for Release"];
+const HORIZON_OPTIONS = [30, 60, 90];
+const DEFAULT_HORIZON = 60;
 const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
-const STORAGE_KEY = "nextPriorities";
-const MILESTONE_COLORS = ["#d97706", "#4f46e5", "#db2777", "#059669", "#dc2626", "#0057b8"];
-const PRIORITY_COLORS = ["#2563eb", "#0f766e", "#c2410c", "#7c3aed", "#be185d", "#374151"];
+const JIRA_OVERRIDE_STORAGE_KEY = "jiraScheduleOverrides";
+
 const TODAY = new Date();
 TODAY.setHours(0, 0, 0, 0);
 const TODAY_KEY = dateKey(TODAY);
-const ACTIVE_STATUSES = ["Ready to Work", "Selected for Development", "In Progress", "Testing", "Ready for Release"];
 
-function dateKey(d) {
-  return new Date(d).toISOString().slice(0, 10);
+function dateKey(date) {
+  const local = new Date(date);
+  local.setHours(12, 0, 0, 0);
+  return local.toISOString().slice(0, 10);
 }
 
-function addDays(d, amount) {
-  const next = new Date(d);
+function parseDate(key) {
+  return new Date(`${key}T12:00:00`);
+}
+
+function addDays(date, amount) {
+  const next = new Date(date);
   next.setDate(next.getDate() + amount);
   return next;
 }
 
+function diffDaysInclusive(startKey, endKey) {
+  if (!startKey || !endKey) return 1;
+  return Math.max(1, Math.round((parseDate(endKey) - parseDate(startKey)) / 86400000) + 1);
+}
+
 function fmtDate(key, options = { month: "short", day: "numeric" }) {
-  return new Date(`${key}T12:00:00`).toLocaleDateString("en-US", options);
+  if (!key) return "Unscheduled";
+  return parseDate(key).toLocaleDateString("en-US", options);
 }
 
 function fmtRange(startKey, endKey) {
-  if (!startKey) return "No schedule";
-  if (!endKey || startKey === endKey) return fmtDate(startKey);
+  if (!startKey && !endKey) return "Needs schedule";
+  if (!endKey || startKey === endKey) return fmtDate(startKey || endKey);
   return `${fmtDate(startKey)} - ${fmtDate(endKey)}`;
 }
 
-function diffDays(startKey, endKey) {
-  if (!startKey || !endKey) return 0;
-  const start = new Date(`${startKey}T12:00:00`);
-  const end = new Date(`${endKey}T12:00:00`);
-  return Math.max(1, Math.round((end - start) / 86400000) + 1);
+function getWeekStart(date) {
+  const next = new Date(date);
+  const day = next.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  next.setDate(next.getDate() + diff);
+  next.setHours(0, 0, 0, 0);
+  return next;
 }
 
-function buildTimelineDays() {
-  const days = [];
-  const start = new Date(TODAY.getFullYear(), TODAY.getMonth(), 1);
-  const end = new Date(TODAY.getFullYear(), TODAY.getMonth() + 2, 0);
-
-  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
-    days.push(new Date(cursor));
-  }
-
-  return days;
+function buildWeekColumns(days) {
+  const weekCount = Math.ceil(days / 7);
+  const start = getWeekStart(TODAY);
+  return Array.from({ length: weekCount }, (_, index) => {
+    const weekStart = addDays(start, index * 7);
+    const weekEnd = addDays(weekStart, 6);
+    return {
+      index,
+      startKey: dateKey(weekStart),
+      endKey: dateKey(weekEnd),
+      label: `Week of ${fmtDate(dateKey(weekStart), { month: "short", day: "numeric" })}`,
+      shortLabel: fmtDate(dateKey(weekStart), { month: "short", day: "numeric" }),
+    };
+  });
 }
 
-function useIsMobile() {
-  const [mobile, setMobile] = useState(() => window.innerWidth < 960);
+function itemTimeline(item, jiraOverrides) {
+  const override = item.fromJira ? jiraOverrides[item.id] : null;
+  const startKey = item.startKey || override?.startKey || item.dueDateKey || item.resolvedKey || TODAY_KEY;
+  const endKey = item.endKey || override?.endKey || item.dueDateKey || item.resolvedKey || startKey;
+  return { startKey, endKey };
+}
 
-  useEffect(() => {
-    const onResize = () => setMobile(window.innerWidth < 960);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+function weeksTouched(item, weeks, jiraOverrides) {
+  const { startKey, endKey } = itemTimeline(item, jiraOverrides);
+  return weeks.filter((week) => startKey <= week.endKey && endKey >= week.startKey).map((week) => week.index);
+}
 
-  return mobile;
+function findMember(memberId) {
+  return TEAM_MEMBERS.find((member) => member.id === memberId);
+}
+
+function chipLabel(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function SaveStatus({ status }) {
   if (!status) return null;
-  const copy = { saving: "Saving", saved: "Saved", error: "Save failed" };
-  return <span className={`save-status ${status}`}>{copy[status]}</span>;
+  const labels = { saving: "Saving", saved: "Saved", error: "Save failed" };
+  return <span className={`save-status ${status}`}>{labels[status]}</span>;
 }
 
-function Section({ eyebrow, title, action, children, wide = false }) {
+function StatCard({ label, value, detail }) {
   return (
-    <section className={`pm-section ${wide ? "wide" : ""}`}>
-      <div className="pm-section-head">
-        <div>
-          <div className="section-eyebrow">{eyebrow}</div>
-          <h2>{title}</h2>
-        </div>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function StatCard({ label, value, detail, tone = "default" }) {
-  return (
-    <div className={`stat-card ${tone}`}>
+    <div className="stat-card">
       <span>{label}</span>
       <strong>{value}</strong>
       <p>{detail}</p>
@@ -99,7 +111,7 @@ function StatCard({ label, value, detail, tone = "default" }) {
   );
 }
 
-function FilterChip({ label, active, onClick }) {
+function FilterChip({ active, label, onClick }) {
   return (
     <button className={`filter-chip ${active ? "active" : ""}`} onClick={onClick}>
       {label}
@@ -107,39 +119,67 @@ function FilterChip({ label, active, onClick }) {
   );
 }
 
-function InitiativeCard({ item, owner, opsCount, onEdit }) {
+function WorkloadLegend() {
   return (
-    <button className="initiative-card" onClick={() => onEdit(item)}>
-      <div className="initiative-topline">
-        <span className="initiative-kind">Project</span>
-        <span className="initiative-owner">{owner?.name || "Unassigned"}</span>
+    <div className="legend-row">
+      <div className="legend-item">
+        <span className="legend-swatch project" />
+        <span>Planned project work</span>
+      </div>
+      <div className="legend-item">
+        <span className="legend-swatch ops" />
+        <span>Jira operational work</span>
+      </div>
+      <div className="legend-item">
+        <span className="legend-swatch done" />
+        <span>Recently completed</span>
+      </div>
+    </div>
+  );
+}
+
+function AssignmentCard({ item, jiraOverrides, onEdit, onDragStart, onDragEnd }) {
+  const owner = findMember(item.memberId);
+  const { startKey, endKey } = itemTimeline(item, jiraOverrides);
+
+  return (
+    <button
+      draggable
+      className={`assignment-card ${item.fromJira ? "ops" : "project"} ${item.isDone ? "done" : ""}`}
+      style={{ "--card-accent": owner?.color || "#475569" }}
+      onClick={() => onEdit(item)}
+      onDragStart={(event) => onDragStart(event, item)}
+      onDragEnd={onDragEnd}
+    >
+      <div className="assignment-card-head">
+        <span className="assignment-type">{item.fromJira ? "Ops" : "Project"}</span>
+        <span className="assignment-owner">{owner?.initials || "TM"}</span>
       </div>
       <strong>{item.title}</strong>
-      <p>{fmtRange(item.startKey, item.endKey)}</p>
-      <div className="initiative-meta">
-        <span>{diffDays(item.startKey, item.endKey)} day duration</span>
-        <span>{opsCount} ops distractions</span>
+      <p>{fmtRange(startKey, endKey)}</p>
+      <div className="assignment-meta">
+        <span>{item.fromJira ? item.jiraKey || item.status || "Jira item" : `${diffDaysInclusive(startKey, endKey)} day block`}</span>
+        <span>{item.status || (item.isDone ? "Done" : "Scheduled")}</span>
       </div>
     </button>
   );
 }
 
-function TeamCard({ member, projects, opsItems, onEditTask }) {
-  const [open, setOpen] = useState(member.id === 1);
-  const activeOps = opsItems
-    .filter((item) => !item.isDone)
-    .sort((a, b) => {
-      const aKey = a.dueDateKey || "9999-12-31";
-      const bKey = b.dueDateKey || "9999-12-31";
-      return aKey.localeCompare(bKey);
-    });
-  const atRisk = activeOps.filter((item) => item.dueDateKey && item.dueDateKey < TODAY_KEY);
-
+function TeamCalendarRow({
+  member,
+  weeks,
+  items,
+  jiraOverrides,
+  dragging,
+  onDropItem,
+  onEditItem,
+  onDragStart,
+  onDragEnd,
+}) {
   return (
-    <div className={`team-card assignee-card ${open ? "open" : ""}`}>
-      <button className="team-card-head assignee-head" onClick={() => setOpen((current) => !current)}>
-        <div className="person-lockup">
-          <span className="assignee-caret">{open ? "▾" : "▸"}</span>
+    <div className="calendar-row">
+      <div className="calendar-row-meta">
+        <div className="member-lockup">
           <div className="avatar" style={{ "--avatar-accent": member.color }}>
             {member.initials}
           </div>
@@ -148,318 +188,102 @@ function TeamCard({ member, projects, opsItems, onEditTask }) {
             <span>{member.role}</span>
           </div>
         </div>
-        <div className="team-metrics">
-          <span>{projects.length} project</span>
-          <span>{activeOps.length} ops</span>
-          <span>{atRisk.length} at risk</span>
-        </div>
-      </button>
-
-      {open ? (
-        <div className="assignee-body">
-          <div className="project-block">
-            <div className="team-column-head">
-              <strong>Project block</strong>
-              <span>Project-level work owned by this developer</span>
-            </div>
-            {projects.length ? (
-              <div className="team-list">
-                {projects.map((item) => (
-                  <button key={item.id} className="team-list-item project-block-item" onClick={() => onEditTask(item)}>
-                    <strong>{item.title}</strong>
-                    <span>{fmtRange(item.startKey, item.endKey)}</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="empty-copy">No project-level delivery assigned.</p>
-            )}
-          </div>
-
-          <div className="ops-block">
-            <div className="team-column-head">
-              <strong>Operational items</strong>
-              <span>Sorted in chronological due date order</span>
-            </div>
-            {activeOps.length ? (
-              <div className="team-list">
-                {activeOps.map((item) => (
-                  <button key={item.id} className="team-list-item ops" onClick={() => onEditTask(item)}>
-                    <strong>{item.title}</strong>
-                    <span>
-                      {item.status || "Operational"}
-                      {item.dueDateKey ? ` · Due ${fmtDate(item.dueDateKey)}` : " · No due date"}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="empty-copy">No operational work selected in current filters.</p>
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function JiraBoard({ items, onEdit }) {
-  const byStatus = ACTIVE_STATUSES.map((status) => ({
-    status,
-    items: items.filter((item) => item.status === status),
-  })).filter((group) => group.items.length > 0);
-
-  return (
-    <div className="jira-board">
-      {byStatus.map((group) => (
-        <div key={group.status} className="jira-column">
-          <div className="jira-column-head">
-            <strong>{group.status}</strong>
-            <span>{group.items.length}</span>
-          </div>
-          <div className="jira-column-body">
-            {group.items.map((item) => (
-              <button key={item.id} className="jira-ticket" onClick={() => onEdit(item)}>
-                <strong>{item.title}</strong>
-                <span>{TEAM_MEMBERS.find((member) => member.id === item.memberId)?.name || "Team"}</span>
-                <div className="jira-ticket-meta">
-                  <span>{item.jiraKey}</span>
-                  <span>{item.dueDateKey ? `Due ${fmtDate(item.dueDateKey)}` : "No due date"}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
-      {!byStatus.length ? <p className="empty-copy">No operational work is visible for the selected Jira statuses.</p> : null}
-    </div>
-  );
-}
-
-function MilestoneStrip({ items, onEdit }) {
-  return (
-    <div className="milestone-strip">
-      {items.length ? (
-        items.map((item) => (
-          <button key={item.id} className="milestone-chip" style={{ "--milestone-color": item.jiraKey }} onClick={() => onEdit(item)}>
-            <strong>{item.title}</strong>
-            <span>{fmtDate(item.startKey, { month: "long", day: "numeric", year: "numeric" })}</span>
-          </button>
-        ))
-      ) : (
-        <p className="empty-copy">No milestones created yet.</p>
-      )}
-    </div>
-  );
-}
-
-function TimelineRow({ item, days, onEdit }) {
-  const startKey = item.startKey || item.dueDateKey || item.resolvedKey;
-  const endKey = item.endKey || item.dueDateKey || item.resolvedKey;
-  const startIndex = startKey ? days.findIndex((day) => dateKey(day) === startKey) : -1;
-  const endIndex = endKey ? days.findIndex((day) => dateKey(day) === endKey) : startIndex;
-  const safeStart = startIndex >= 0 ? startIndex : 0;
-  const safeEnd = endIndex >= safeStart ? endIndex : safeStart;
-  const span = Math.max(1, safeEnd - safeStart + 1);
-  const type = item.status === "MILESTONE" ? "milestone" : item.fromJira ? "ops" : "planned";
-
-  return (
-    <button className={`timeline-row ${type}`} onClick={() => onEdit(item)}>
-      <div className="timeline-meta">
-        <div className="timeline-type">
-          <span className={`timeline-pill ${type}`}>{type === "planned" ? "Project" : type === "ops" ? "Ops" : "Milestone"}</span>
-        </div>
-        <div className="timeline-name">
-          <strong>{item.title}</strong>
-          <span>{item.fromJira ? item.jiraKey || item.status : fmtRange(item.startKey, item.endKey)}</span>
-        </div>
-        <div className="timeline-dates">
-          <strong>
-            {item.fromJira
-              ? item.isDone && item.resolvedKey
-                ? `Completed ${fmtDate(item.resolvedKey)}`
-                : item.dueDateKey
-                  ? `Due ${fmtDate(item.dueDateKey)}`
-                  : "No due date"
-              : fmtRange(item.startKey, item.endKey)}
-          </strong>
-          <span>{item.fromJira ? item.status || "Operational" : `${diffDays(item.startKey, item.endKey)} day duration`}</span>
+        <div className="member-pills">
+          <span>{chipLabel(items.filter((item) => !item.fromJira && !item.isDone).length, "project")}</span>
+          <span>{chipLabel(items.filter((item) => item.fromJira && !item.isDone).length, "ops item", "ops items")}</span>
         </div>
       </div>
-      <div className="timeline-track">
-        <div className="timeline-bar" style={{ left: `${(safeStart / days.length) * 100}%`, width: `${(span / days.length) * 100}%` }} />
-      </div>
-    </button>
-  );
-}
 
-function GanttBoard({ members, assignments, milestones, days, showDone, selectedStatuses, onEditTask, onEditMilestone }) {
-  const monthGroups = [];
-  days.forEach((day) => {
-    const key = `${day.getFullYear()}-${day.getMonth()}`;
-    const label = day.toLocaleDateString("en-US", { month: "short" });
-    const current = monthGroups[monthGroups.length - 1];
-    if (current && current.key === key) current.count += 1;
-    else monthGroups.push({ key, label, count: 1 });
-  });
-
-  return (
-    <div className="gantt-board">
-      <div className="gantt-months">
-        {monthGroups.map((month) => (
-          <div key={month.key} style={{ gridColumn: `span ${month.count}` }}>
-            {month.label}
-          </div>
-        ))}
-      </div>
-      <div className="gantt-days">
-        {days.map((day) => (
-          <div key={dateKey(day)} className={`gantt-day ${dateKey(day) === TODAY_KEY ? "today" : ""}`}>
-            <span>{day.toLocaleDateString("en-US", { month: "short" })}</span>
-            <strong>{day.getDate()}</strong>
-          </div>
-        ))}
-      </div>
-      <div className="gantt-header-row">
-        <div className="gantt-header-meta">
-          <span>Type</span>
-          <span>Work item</span>
-          <span>Timing / status</span>
+      <div className="calendar-track" style={{ "--week-count": weeks.length }}>
+        <div className="calendar-week-grid" style={{ "--week-count": weeks.length }}>
+          {weeks.map((week) => (
+            <div
+              key={`${member.id}-${week.index}`}
+              className={`week-dropzone ${dragging ? "drop-active" : ""}`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => onDropItem(member.id, week.startKey)}
+              title={`${member.name} · ${week.label}`}
+            />
+          ))}
         </div>
-        <div className="gantt-header-track">Timeline</div>
-      </div>
-      <div className="gantt-lanes">
-        {members.map((member) => {
-          const memberItems = assignments.filter((item) => {
-            if (item.memberId !== member.id) return false;
-            if (!showDone && item.isDone) return false;
-            if (item.fromJira && !selectedStatuses.includes(item.status || "")) return false;
-            return true;
-          });
-          const projects = memberItems.filter((item) => !item.fromJira && item.status !== "MILESTONE");
-          const ops = memberItems.filter((item) => item.fromJira);
 
-          return (
-            <div key={member.id} className="gantt-member">
-              <div className="gantt-member-head">
-                <div className="person-lockup">
-                  <div className="avatar" style={{ "--avatar-accent": member.color }}>
-                    {member.initials}
-                  </div>
-                  <div>
-                    <strong>{member.name}</strong>
-                    <span>{member.role}</span>
-                  </div>
-                </div>
-                <div className="gantt-member-summary">
-                  <span>{projects.length} project</span>
-                  <span>{ops.length} ops</span>
-                </div>
+        <div className="calendar-items" style={{ "--week-count": weeks.length }}>
+          {items.map((item) => {
+            const touchedWeeks = weeksTouched(item, weeks, jiraOverrides);
+            if (!touchedWeeks.length) return null;
+
+            const firstIndex = touchedWeeks[0];
+            const lastIndex = touchedWeeks[touchedWeeks.length - 1];
+
+            return (
+              <div
+                key={item.id}
+                className="calendar-item-shell"
+                style={{
+                  gridColumn: `${firstIndex + 1} / ${lastIndex + 2}`,
+                }}
+              >
+                <AssignmentCard
+                  item={item}
+                  jiraOverrides={jiraOverrides}
+                  onEdit={onEditItem}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                />
               </div>
-              <div className="gantt-member-body">
-                {projects.length ? (
-                  <div className="gantt-subgroup">
-                    <div className="gantt-subgroup-label">Project delivery</div>
-                    {projects.map((item) => (
-                      <TimelineRow key={item.id} item={item} days={days} onEdit={onEditTask} />
-                    ))}
-                  </div>
-                ) : null}
-                {ops.length ? (
-                  <div className="gantt-subgroup ops">
-                    <div className="gantt-subgroup-label">Operational interruptions</div>
-                    {ops.map((item) => (
-                      <TimelineRow key={item.id} item={item} days={days} onEdit={onEditTask} />
-                    ))}
-                  </div>
-                ) : null}
-                {!projects.length && !ops.length ? <p className="empty-copy">No visible work assigned for this person.</p> : null}
-              </div>
-            </div>
-          );
-        })}
-        {milestones.length ? (
-          <div className="gantt-member milestone-group">
-            <div className="gantt-member-head">
-              <div>
-                <strong>Shared milestones</strong>
-                <span>Team-wide delivery checkpoints</span>
-              </div>
-            </div>
-            <div className="gantt-member-body">
-              <div className="gantt-subgroup">
-                <div className="gantt-subgroup-label">Milestones</div>
-                {milestones.map((item) => (
-                  <TimelineRow key={item.id} item={item} days={days} onEdit={onEditMilestone} />
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : null}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 }
 
 export default function App() {
-  useIsMobile();
   const [authStatus, setAuthStatus] = useState("checking");
   const [authConfigured, setAuthConfigured] = useState(true);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
   const [loginSubmitting, setLoginSubmitting] = useState(false);
+
   const [assignments, setAssignments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [saveStatus, setSaveStatus] = useState(null);
-  const [viewMode, setViewMode] = useState("all");
-  const [showDone, setShowDone] = useState(true);
+
+  const [showDone, setShowDone] = useState(false);
+  const [horizonDays, setHorizonDays] = useState(DEFAULT_HORIZON);
+  const [visibleMemberIds, setVisibleMemberIds] = useState(TEAM_MEMBERS.map((member) => member.id));
   const [selectedJiraStatuses, setSelectedJiraStatuses] = useState([]);
+  const [jiraOverrides, setJiraOverrides] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(JIRA_OVERRIDE_STORAGE_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const [draggingId, setDraggingId] = useState(null);
+
   const [showTaskModal, setShowTaskModal] = useState(false);
-  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
-  const [showPriorityModal, setShowPriorityModal] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState(null);
-  const [editingMilestone, setEditingMilestone] = useState(null);
-  const [editingPriority, setEditingPriority] = useState(null);
   const [taskForm, setTaskForm] = useState({
     title: "",
-    memberId: 1,
+    memberId: TEAM_MEMBERS[0].id,
     startKey: TODAY_KEY,
     endKey: dateKey(addDays(TODAY, 4)),
-    fromJira: false,
-    dueDateKey: null,
-  });
-  const [milestoneForm, setMilestoneForm] = useState({
-    title: "",
-    dateKey: TODAY_KEY,
-    color: MILESTONE_COLORS[0],
-  });
-  const [priorityForm, setPriorityForm] = useState({
-    title: "",
-    startKey: "",
-    endKey: "",
-    color: PRIORITY_COLORS[0],
-  });
-  const [nextPriorities, setNextPriorities] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    } catch {
-      return [];
-    }
   });
 
   const nextId = useRef(300);
   const saveTimer = useRef(null);
-  const timelineDays = useMemo(() => buildTimelineDays(), []);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(nextPriorities));
+      localStorage.setItem(JIRA_OVERRIDE_STORAGE_KEY, JSON.stringify(jiraOverrides));
     } catch {
-      // ignore
+      // ignore local storage issues
     }
-  }, [nextPriorities]);
+  }, [jiraOverrides]);
 
   useEffect(() => {
     let cancelled = false;
@@ -488,93 +312,28 @@ export default function App() {
 
   useEffect(() => {
     if (authStatus !== "authenticated") return;
-
     let cancelled = false;
 
-    async function load() {
+    async function loadData() {
       setLoading(true);
       try {
-        const assignmentsResponse = await fetch("/api/assignments");
-        const stored = await assignmentsResponse.json();
-        const savedAssignments = Array.isArray(stored)
-          ? stored.map((row) => ({
-              id: row.id,
-              title: row.title,
-              memberId: row.member_id,
-              startKey: row.start_key,
-              endKey: row.end_key,
-              fromJira: row.from_jira,
-              jiraKey: row.jira_key,
-              status: row.status,
-              dueDateKey: row.due_date_key,
-              resolvedKey: row.resolved_key,
-              isDone: row.is_done,
-            }))
-          : [];
-
-        const [activeResponse, doneResponse] = await Promise.all([
-          fetch(
-            `/api/jira?jql=${encodeURIComponent(
-              'status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC'
-            )}`
-          ),
-          fetch(
-            `/api/jira?jql=${encodeURIComponent(
-              'status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC'
-            )}`
-          ),
-        ]);
-
-        const activeData = await activeResponse.json();
-        const doneData = await doneResponse.json();
-
-        const mapIssue = (issue, isDone) => {
-          const { summary, assignee, duedate } = issue.fields;
-          const member = TEAM_MEMBERS.find(
-            (person) =>
-              assignee && person.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase())
-          );
-          if (!member) return null;
-
-          const dueDateKey = duedate ? dateKey(new Date(`${duedate}T12:00:00`)) : null;
-          const resolved = issue.fields.transitionDate || issue.fields.resolutiondate;
-          const resolvedKey = resolved ? dateKey(new Date(resolved)) : null;
-
-          return {
-            id: `jira-${issue.id}`,
-            title: summary,
-            memberId: member.id,
-            startKey: null,
-            endKey: null,
-            fromJira: true,
-            jiraKey: issue.key,
-            status: issue.fields.status?.name,
-            dueDateKey,
-            resolvedKey,
-            isDone,
-          };
-        };
-
-        const jiraAssignments = [
-          ...(activeData.issues || []).map((issue) => mapIssue(issue, false)),
-          ...(doneData.issues || []).map((issue) => mapIssue(issue, true)),
-        ].filter(Boolean);
-
-        const merged = [...savedAssignments.filter((item) => !item.fromJira), ...jiraAssignments];
+        const manualAssignments = await fetchManualAssignments();
+        const jiraAssignments = await fetchJiraAssignments();
+        const merged = [...manualAssignments, ...jiraAssignments];
 
         if (!cancelled) {
           setAssignments(merged);
-          await persistAssignments(merged, setSaveStatus);
+          await persistAssignments(manualAssignments, setSaveStatus);
         }
       } catch (error) {
         console.error("Initial load failed", error);
-        if (!cancelled) setSyncStatus({ type: "error", message: "Unable to load Jira and saved assignments." });
+        if (!cancelled) setSyncStatus({ type: "error", message: "Unable to load team assignments and Jira items." });
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    load();
+    loadData();
     return () => {
       cancelled = true;
     };
@@ -589,126 +348,129 @@ export default function App() {
     if (!availableJiraStatuses.length) return;
     setSelectedJiraStatuses((current) => {
       if (!current.length) return availableJiraStatuses;
-      return [...new Set(current.filter((status) => availableJiraStatuses.includes(status)).concat(availableJiraStatuses))];
+      const next = current.filter((status) => availableJiraStatuses.includes(status));
+      return next.length ? next : availableJiraStatuses;
     });
   }, [availableJiraStatuses]);
 
+  const weekColumns = useMemo(() => buildWeekColumns(horizonDays), [horizonDays]);
+  const horizonStartKey = weekColumns[0]?.startKey || TODAY_KEY;
+  const horizonEndKey = weekColumns[weekColumns.length - 1]?.endKey || TODAY_KEY;
+
   const filteredAssignments = useMemo(() => {
     return assignments.filter((item) => {
+      if (!visibleMemberIds.includes(item.memberId)) return false;
       if (!showDone && item.isDone) return false;
-      if (item.fromJira && !selectedJiraStatuses.includes(item.status || "")) return false;
-      if (viewMode === "planned") return !item.fromJira;
-      if (viewMode === "ops") return item.fromJira;
-      return true;
+      if (item.fromJira && selectedJiraStatuses.length && !selectedJiraStatuses.includes(item.status || "")) return false;
+
+      const timeline = itemTimeline(item, jiraOverrides);
+      return timeline.startKey <= horizonEndKey && timeline.endKey >= horizonStartKey;
     });
-  }, [assignments, selectedJiraStatuses, showDone, viewMode]);
+  }, [assignments, horizonEndKey, horizonStartKey, jiraOverrides, selectedJiraStatuses, showDone, visibleMemberIds]);
 
-  const milestones = useMemo(
-    () => assignments.filter((item) => item.status === "MILESTONE").sort((a, b) => a.startKey.localeCompare(b.startKey)),
-    [assignments]
-  );
+  const stats = useMemo(() => {
+    const visible = filteredAssignments.filter((item) => !item.isDone);
+    return {
+      planned: visible.filter((item) => !item.fromJira).length,
+      ops: visible.filter((item) => item.fromJira).length,
+      people: visibleMemberIds.length,
+      overdue: visible.filter((item) => item.fromJira && item.dueDateKey && item.dueDateKey < TODAY_KEY).length,
+    };
+  }, [filteredAssignments, visibleMemberIds.length]);
 
-  const plannedItems = useMemo(
-    () => filteredAssignments.filter((item) => !item.fromJira && item.status !== "MILESTONE"),
-    [filteredAssignments]
-  );
-  const opsItems = useMemo(
-    () => filteredAssignments.filter((item) => item.fromJira && !item.isDone),
-    [filteredAssignments]
-  );
-  const overdueOps = useMemo(
-    () => opsItems.filter((item) => item.dueDateKey && item.dueDateKey < TODAY_KEY),
-    [opsItems]
-  );
+  const teamRows = useMemo(() => {
+    return TEAM_MEMBERS.filter((member) => visibleMemberIds.includes(member.id)).map((member) => ({
+      member,
+      items: filteredAssignments
+        .filter((item) => item.memberId === member.id)
+        .sort((a, b) => {
+          const aStart = itemTimeline(a, jiraOverrides).startKey;
+          const bStart = itemTimeline(b, jiraOverrides).startKey;
+          return aStart.localeCompare(bStart);
+        }),
+    }));
+  }, [filteredAssignments, jiraOverrides, visibleMemberIds]);
 
-  const summary = useMemo(
-    () => ({
-      planned: assignments.filter((item) => !item.fromJira && item.status !== "MILESTONE" && !item.isDone).length,
-      activeOps: assignments.filter((item) => item.fromJira && !item.isDone).length,
-      milestones: milestones.length,
-      overdueOps: assignments.filter((item) => item.fromJira && !item.isDone && item.dueDateKey && item.dueDateKey < TODAY_KEY).length,
-    }),
-    [assignments, milestones.length]
-  );
+  const opsBacklog = useMemo(() => {
+    return assignments
+      .filter((item) => item.fromJira && !item.isDone)
+      .filter((item) => !selectedJiraStatuses.length || selectedJiraStatuses.includes(item.status || ""))
+      .sort((a, b) => {
+        const aKey = itemTimeline(a, jiraOverrides).startKey;
+        const bKey = itemTimeline(b, jiraOverrides).startKey;
+        return aKey.localeCompare(bKey);
+      });
+  }, [assignments, jiraOverrides, selectedJiraStatuses]);
 
-  const portfolioItems = useMemo(
-    () =>
-      plannedItems
-        .map((item) => ({
-          item,
-          owner: TEAM_MEMBERS.find((member) => member.id === item.memberId),
-          opsCount: assignments.filter((assignment) => assignment.memberId === item.memberId && assignment.fromJira && !assignment.isDone).length,
-        }))
-        .sort((a, b) => (a.item.startKey || "9999-12-31").localeCompare(b.item.startKey || "9999-12-31")),
-    [assignments, plannedItems]
-  );
-
-  const teamView = useMemo(
-    () =>
-      TEAM_MEMBERS.map((member) => ({
-        member,
-        projects: assignments.filter((item) => item.memberId === member.id && !item.fromJira && item.status !== "MILESTONE" && !item.isDone),
-        opsItems: assignments.filter(
-          (item) => item.memberId === member.id && item.fromJira && selectedJiraStatuses.includes(item.status || "")
-        ),
-      })),
-    [assignments, selectedJiraStatuses]
-  );
+  function scheduleManualPersist(nextAssignments) {
+    const manualOnly = nextAssignments.filter((item) => !item.fromJira);
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => persistAssignments(manualOnly, setSaveStatus), 400);
+  }
 
   function updateAssignments(updater) {
     setAssignments((current) => {
       const next = typeof updater === "function" ? updater(current) : updater;
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(() => persistAssignments(next, setSaveStatus), 500);
+      scheduleManualPersist(next);
       return next;
     });
   }
 
-  function openNewTask(memberId = 1) {
+  function openNewTask(memberId = TEAM_MEMBERS[0].id) {
     setEditingAssignment(null);
     setTaskForm({
       title: "",
       memberId,
       startKey: TODAY_KEY,
       endKey: dateKey(addDays(TODAY, 4)),
-      fromJira: false,
-      dueDateKey: null,
     });
     setShowTaskModal(true);
   }
 
   function openTask(item) {
+    const timeline = itemTimeline(item, jiraOverrides);
     setEditingAssignment(item);
     setTaskForm({
       title: item.title,
       memberId: item.memberId,
-      startKey: item.startKey || TODAY_KEY,
-      endKey: item.endKey || item.startKey || TODAY_KEY,
-      fromJira: item.fromJira,
-      dueDateKey: item.dueDateKey || null,
+      startKey: timeline.startKey,
+      endKey: timeline.endKey,
     });
     setShowTaskModal(true);
   }
 
   function saveTask() {
-    if (!taskForm.title.trim()) return;
-    if (!taskForm.fromJira && taskForm.endKey < taskForm.startKey) return;
+    if (!taskForm.title.trim() || taskForm.endKey < taskForm.startKey) return;
 
     if (editingAssignment) {
-      updateAssignments((current) =>
-        current.map((item) =>
-          item.id === editingAssignment.id
-            ? {
-                ...item,
-                title: taskForm.title.trim(),
-                memberId: Number(taskForm.memberId),
-                startKey: taskForm.fromJira ? null : taskForm.startKey,
-                endKey: taskForm.fromJira ? null : taskForm.endKey,
-                dueDateKey: taskForm.fromJira ? taskForm.dueDateKey : null,
-              }
-            : item
-        )
-      );
+      if (editingAssignment.fromJira) {
+        setJiraOverrides((current) => ({
+          ...current,
+          [editingAssignment.id]: {
+            startKey: taskForm.startKey,
+            endKey: taskForm.endKey,
+          },
+        }));
+        updateAssignments((current) =>
+          current.map((item) =>
+            item.id === editingAssignment.id ? { ...item, title: taskForm.title.trim(), memberId: Number(taskForm.memberId) } : item
+          )
+        );
+      } else {
+        updateAssignments((current) =>
+          current.map((item) =>
+            item.id === editingAssignment.id
+              ? {
+                  ...item,
+                  title: taskForm.title.trim(),
+                  memberId: Number(taskForm.memberId),
+                  startKey: taskForm.startKey,
+                  endKey: taskForm.endKey,
+                }
+              : item
+          )
+        );
+      }
     } else {
       updateAssignments((current) => [
         ...current,
@@ -720,7 +482,7 @@ export default function App() {
           endKey: taskForm.endKey,
           fromJira: false,
           jiraKey: null,
-          status: null,
+          status: "Planned",
           dueDateKey: null,
           resolvedKey: null,
           isDone: false,
@@ -731,147 +493,89 @@ export default function App() {
     setShowTaskModal(false);
   }
 
-  function deleteTask(id) {
-    updateAssignments((current) => current.filter((item) => item.id !== id));
+  function deleteTask(item) {
+    if (item.fromJira) {
+      setJiraOverrides((current) => {
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
+      updateAssignments((current) => current.filter((entry) => entry.id !== item.id));
+    } else {
+      updateAssignments((current) => current.filter((entry) => entry.id !== item.id));
+    }
     setShowTaskModal(false);
   }
 
-  function openNewMilestone() {
-    setEditingMilestone(null);
-    setMilestoneForm({ title: "", dateKey: TODAY_KEY, color: MILESTONE_COLORS[0] });
-    setShowMilestoneModal(true);
+  function toggleMember(memberId) {
+    setVisibleMemberIds((current) => {
+      if (current.includes(memberId)) return current.filter((id) => id !== memberId);
+      return [...current, memberId];
+    });
   }
 
-  function openMilestone(item) {
-    setEditingMilestone(item);
-    setMilestoneForm({ title: item.title, dateKey: item.startKey, color: item.jiraKey || MILESTONE_COLORS[0] });
-    setShowMilestoneModal(true);
+  function handleDragStart(event, item) {
+    setDraggingId(item.id);
+    event.dataTransfer.setData("text/plain", item.id);
+    event.dataTransfer.effectAllowed = "move";
   }
 
-  function saveMilestone() {
-    if (!milestoneForm.title.trim()) return;
-    const payload = {
-      id: editingMilestone ? editingMilestone.id : `milestone-${nextId.current++}-${Date.now()}`,
-      title: milestoneForm.title.trim(),
-      memberId: null,
-      startKey: milestoneForm.dateKey,
-      endKey: milestoneForm.dateKey,
-      fromJira: false,
-      jiraKey: milestoneForm.color,
-      status: "MILESTONE",
-      dueDateKey: null,
-      resolvedKey: null,
-      isDone: false,
-    };
+  function handleDragEnd() {
+    setDraggingId(null);
+  }
 
-    if (editingMilestone) {
-      updateAssignments((current) => current.map((item) => (item.id === editingMilestone.id ? payload : item)));
-    } else {
-      updateAssignments((current) => [...current, payload]);
+  function handleDropItem(memberId, weekStartKey) {
+    if (!draggingId) return;
+
+    const item = assignments.find((entry) => entry.id === draggingId);
+    if (!item) {
+      setDraggingId(null);
+      return;
     }
 
-    setShowMilestoneModal(false);
-  }
+    const timeline = itemTimeline(item, jiraOverrides);
+    const duration = diffDaysInclusive(timeline.startKey, timeline.endKey);
+    const nextEndKey = dateKey(addDays(parseDate(weekStartKey), duration - 1));
 
-  function deleteMilestone(id) {
-    updateAssignments((current) => current.filter((item) => item.id !== id));
-    setShowMilestoneModal(false);
-  }
+    if (item.fromJira) {
+      setJiraOverrides((current) => ({
+        ...current,
+        [item.id]: { startKey: weekStartKey, endKey: nextEndKey },
+      }));
+      setAssignments((current) => current.map((entry) => (entry.id === item.id ? { ...entry, memberId } : entry)));
+    } else {
+      updateAssignments((current) =>
+        current.map((entry) =>
+          entry.id === item.id
+            ? {
+                ...entry,
+                memberId,
+                startKey: weekStartKey,
+                endKey: nextEndKey,
+              }
+            : entry
+        )
+      );
+    }
 
-  function openNewPriority() {
-    setEditingPriority(null);
-    setPriorityForm({ title: "", startKey: "", endKey: "", color: PRIORITY_COLORS[0] });
-    setShowPriorityModal(true);
-  }
-
-  function openPriority(item) {
-    setEditingPriority(item);
-    setPriorityForm({
-      title: item.title,
-      startKey: item.startKey || "",
-      endKey: item.endKey || "",
-      color: item.color || PRIORITY_COLORS[0],
-    });
-    setShowPriorityModal(true);
-  }
-
-  function savePriority() {
-    if (!priorityForm.title.trim()) return;
-    const payload = {
-      id: editingPriority ? editingPriority.id : `priority-${Date.now()}`,
-      title: priorityForm.title.trim(),
-      startKey: priorityForm.startKey || null,
-      endKey: priorityForm.endKey || priorityForm.startKey || null,
-      color: priorityForm.color,
-    };
-
-    if (editingPriority) setNextPriorities((current) => current.map((item) => (item.id === editingPriority.id ? payload : item)));
-    else setNextPriorities((current) => [...current, payload]);
-
-    setShowPriorityModal(false);
-  }
-
-  function deletePriority(id) {
-    setNextPriorities((current) => current.filter((item) => item.id !== id));
-    setShowPriorityModal(false);
+    setDraggingId(null);
   }
 
   async function syncFromJira() {
     setSyncing(true);
     setSyncStatus(null);
     try {
-      const [activeResponse, doneResponse] = await Promise.all([
-        fetch(
-          `/api/jira?jql=${encodeURIComponent(
-            'status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC'
-          )}`
-        ),
-        fetch(
-          `/api/jira?jql=${encodeURIComponent(
-            'status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC'
-          )}`
-        ),
-      ]);
-      const activeData = await activeResponse.json();
-      const doneData = await doneResponse.json();
-
-      const mapIssue = (issue, isDone) => {
-        const { summary, assignee, duedate, resolutiondate } = issue.fields;
-        const member = TEAM_MEMBERS.find(
-          (person) =>
-            assignee && person.name.toLowerCase().includes(assignee.displayName?.split(" ")[0].toLowerCase())
-        );
-        if (!member) return null;
-
-        return {
-          id: `jira-${issue.id}`,
-          title: summary,
-          memberId: member.id,
-          startKey: null,
-          endKey: null,
-          fromJira: true,
-          jiraKey: issue.key,
-          status: issue.fields.status?.name,
-          dueDateKey: duedate ? dateKey(new Date(`${duedate}T12:00:00`)) : null,
-          resolvedKey: resolutiondate ? dateKey(new Date(resolutiondate)) : null,
-          isDone,
-        };
-      };
-
-      const merged = [
-        ...assignments.filter((item) => !item.fromJira),
-        ...(activeData.issues || []).map((issue) => mapIssue(issue, false)).filter(Boolean),
-        ...(doneData.issues || []).map((issue) => mapIssue(issue, true)).filter(Boolean),
-      ];
-
-      updateAssignments(merged);
+      const manualAssignments = assignments.filter((item) => !item.fromJira);
+      const jiraAssignments = await fetchJiraAssignments();
+      setAssignments([...manualAssignments, ...jiraAssignments]);
+      scheduleManualPersist(manualAssignments);
       setSyncStatus({
         type: "success",
-        message: `Synced ${(activeData.issues || []).length} active and ${(doneData.issues || []).length} recently completed Jira tickets.`,
+        message: `Synced ${jiraAssignments.filter((item) => !item.isDone).length} active Jira items and preserved manual project blocks.`,
       });
     } catch (error) {
       console.error("Jira sync failed", error);
-      setSyncStatus({ type: "error", message: "Sync failed. Check Jira connection and try again." });
+      setSyncStatus({ type: "error", message: "Sync failed. Check Jira environment variables and token." });
     } finally {
       setSyncing(false);
     }
@@ -888,12 +592,10 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(loginForm),
       });
-
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.error || "Login failed");
       }
-
       setAuthStatus("authenticated");
       setLoginForm({ username: "", password: "" });
     } catch (error) {
@@ -926,9 +628,7 @@ export default function App() {
         <section className="auth-card">
           <div className="pm-badge">Secure access</div>
           <h1>Sign in to Team Planner</h1>
-          <p>
-            Use the application credentials to access portfolio planning, Jira operational data, and saved assignments.
-          </p>
+          <p>Use the application credentials to open the executive calendar, drag/drop assignments, and review Jira operational load.</p>
           {!authConfigured ? (
             <div className="auth-warning">
               `APP_LOGIN_USER` and `APP_LOGIN_PASSWORD` are not configured yet, so the app cannot validate a login.
@@ -966,9 +666,11 @@ export default function App() {
     <div className="pm-app">
       <header className="pm-topbar">
         <div className="pm-brand">
-          <span className="pm-badge">Portfolio planner</span>
-          <h1>Delivery portfolio for web development</h1>
-          <p>Track delivery commitments, operational interruptions, milestones, and the 60-day program timeline in one place.</p>
+          <span className="pm-badge">Executive team calendar</span>
+          <h1>Weekly delivery calendar for your team</h1>
+          <p>
+            Block off people by week, drag assignments across the next 30, 60, or 90 days, and blend planned project work with Jira operational demand.
+          </p>
         </div>
         <div className="pm-actions">
           <SaveStatus status={saveStatus} />
@@ -978,11 +680,8 @@ export default function App() {
           <button className="ghost-button" onClick={() => setShowDone((current) => !current)}>
             {showDone ? "Hide completed" : "Show completed"}
           </button>
-          <button className="ghost-button" onClick={openNewMilestone}>
-            Add milestone
-          </button>
-          <button className="primary-button" onClick={() => openNewTask(1)}>
-            Add project item
+          <button className="primary-button" onClick={() => openNewTask()}>
+            Add assignment
           </button>
           <button className="sync-button" onClick={syncFromJira} disabled={syncing}>
             {syncing ? "Syncing Jira..." : "Sync Jira"}
@@ -992,142 +691,160 @@ export default function App() {
 
       {syncStatus ? <div className={`pm-banner ${syncStatus.type}`}>{syncStatus.message}</div> : null}
 
-      <div className="pm-stats">
-        <StatCard label="Projects in motion" value={summary.planned} detail="Active planned delivery items" tone="blue" />
-        <StatCard label="Operational pull" value={summary.activeOps} detail="Active Jira items across the team" tone="orange" />
-        <StatCard label="Overdue ops" value={summary.overdueOps} detail="Operational items already past due" tone="red" />
-        <StatCard label="Milestones" value={summary.milestones} detail="Shared delivery checkpoints on the board" tone="purple" />
-      </div>
+      <section className="pm-stats">
+        <StatCard label="Visible team members" value={stats.people} detail="People included in the current executive view" />
+        <StatCard label="Planned assignments" value={stats.planned} detail="Project blocks scheduled inside the selected horizon" />
+        <StatCard label="Jira operational items" value={stats.ops} detail="Operational demand currently visible from Jira" />
+        <StatCard label="Overdue operational items" value={stats.overdue} detail="Active Jira work that is already past due" />
+      </section>
 
-      <div className="pm-toolbar">
-        <div className="segmented-control">
-          <button className={viewMode === "all" ? "active" : ""} onClick={() => setViewMode("all")}>
-            All work
-          </button>
-          <button className={viewMode === "planned" ? "active" : ""} onClick={() => setViewMode("planned")}>
-            Project delivery
-          </button>
-          <button className={viewMode === "ops" ? "active" : ""} onClick={() => setViewMode("ops")}>
-            Operational only
-          </button>
-        </div>
-        <div className="toolbar-date">
-          <span>Today</span>
-          <strong>{fmtDate(TODAY_KEY, { month: "long", day: "numeric", year: "numeric" })}</strong>
-        </div>
-      </div>
-
-      {viewMode !== "planned" ? (
-        <div className="status-filter-bar">
-          <div className="status-filter-copy">
-            <strong>Operational status filters</strong>
-            <span>Refine Jira work by status so you can define what counts as operational load.</span>
-          </div>
-          <div className="status-filter-row">
-            <button className="ghost-button" onClick={() => setSelectedJiraStatuses(availableJiraStatuses)}>
-              Select all
-            </button>
-            <button className="ghost-button" onClick={() => setSelectedJiraStatuses([])}>
-              Clear all
-            </button>
-            <div className="status-filter-chips">
-              {availableJiraStatuses.map((status) => (
-                <FilterChip
-                  key={status}
-                  label={status}
-                  active={selectedJiraStatuses.includes(status)}
-                  onClick={() =>
-                    setSelectedJiraStatuses((current) =>
-                      current.includes(status) ? current.filter((item) => item !== status) : [...current, status]
-                    )
-                  }
-                />
-              ))}
-            </div>
+      <section className="control-panel">
+        <div className="control-group">
+          <span className="control-label">Planning window</span>
+          <div className="chip-row">
+            {HORIZON_OPTIONS.map((option) => (
+              <FilterChip key={option} active={horizonDays === option} label={`${option} days`} onClick={() => setHorizonDays(option)} />
+            ))}
           </div>
         </div>
-      ) : null}
 
-      {loading ? (
-        <section className="loading-panel">
-          <div className="spinner" />
-          <p>Loading delivery data and Jira work...</p>
-        </section>
-      ) : (
-        <main className="pm-grid">
-          <Section eyebrow="Portfolio" title="Delivery portfolio" wide>
-            <div className="initiative-grid">
-              {portfolioItems.length ? (
-                portfolioItems.map(({ item, owner, opsCount }) => (
-                  <InitiativeCard key={item.id} item={item} owner={owner} opsCount={opsCount} onEdit={openTask} />
-                ))
-              ) : (
-                <p className="empty-copy">No planned project delivery items are visible in this view.</p>
-              )}
-            </div>
-          </Section>
-
-          <Section
-            eyebrow="Priorities"
-            title="Upcoming priorities"
-            action={
-              <button className="ghost-button" onClick={openNewPriority}>
-                Add priority
-              </button>
-            }
-          >
-            <div className="priority-board">
-              {nextPriorities.length ? (
-                nextPriorities.map((item) => (
-                  <button key={item.id} className="priority-card" style={{ "--priority-accent": item.color }} onClick={() => openPriority(item)}>
-                    <strong>{item.title}</strong>
-                    <span>{item.startKey ? fmtRange(item.startKey, item.endKey) : "Needs scheduling"}</span>
-                  </button>
-                ))
-              ) : (
-                <p className="empty-copy">No upcoming priorities captured yet.</p>
-              )}
-            </div>
-          </Section>
-
-          <Section eyebrow="Milestones" title="Dates the team is working toward">
-            <MilestoneStrip items={milestones} onEdit={openMilestone} />
-          </Section>
-
-          <Section eyebrow="Team management" title="Work by team member" wide>
-            <div className="team-grid">
-              {teamView.map(({ member, projects, opsItems: memberOps }) => (
-                <TeamCard key={member.id} member={member} projects={projects} opsItems={memberOps} onEditTask={openTask} />
-              ))}
-            </div>
-          </Section>
-
-          <Section eyebrow="Operations" title="Jira workflow board" wide>
-            <JiraBoard items={opsItems} onEdit={openTask} />
-          </Section>
-
-          <Section eyebrow="Program timeline" title="60-day delivery map" wide>
-            <GanttBoard
-              members={TEAM_MEMBERS}
-              assignments={filteredAssignments}
-              milestones={milestones}
-              days={timelineDays}
-              showDone={showDone}
-              selectedStatuses={selectedJiraStatuses}
-              onEditTask={openTask}
-              onEditMilestone={openMilestone}
+        <div className="control-group">
+          <span className="control-label">Team filter</span>
+          <div className="chip-row">
+            <FilterChip
+              active={visibleMemberIds.length === TEAM_MEMBERS.length}
+              label="All team members"
+              onClick={() => setVisibleMemberIds(TEAM_MEMBERS.map((member) => member.id))}
             />
-          </Section>
-        </main>
-      )}
+            {TEAM_MEMBERS.map((member) => (
+              <button
+                key={member.id}
+                className={`member-chip ${visibleMemberIds.includes(member.id) ? "active" : ""}`}
+                style={{ "--chip-accent": member.color }}
+                onClick={() => toggleMember(member.id)}
+              >
+                {member.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="control-group">
+          <span className="control-label">Jira status filter</span>
+          <div className="chip-row">
+            <FilterChip active={selectedJiraStatuses.length === availableJiraStatuses.length} label="All statuses" onClick={() => setSelectedJiraStatuses(availableJiraStatuses)} />
+            {availableJiraStatuses.map((status) => (
+              <FilterChip
+                key={status}
+                active={selectedJiraStatuses.includes(status)}
+                label={status}
+                onClick={() =>
+                  setSelectedJiraStatuses((current) =>
+                    current.includes(status) ? current.filter((entry) => entry !== status) : [...current, status]
+                  )
+                }
+              />
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="calendar-panel">
+          <div className="calendar-panel-head">
+          <div>
+            <div className="section-eyebrow">Resource calendar</div>
+            <h2>Weekly capacity map</h2>
+            <p>Drag any block onto another team member or week to reschedule it. Jira items keep syncing, and their calendar placement stays locally mapped for planning.</p>
+          </div>
+          <WorkloadLegend />
+        </div>
+
+        <div className="calendar-shell">
+          <div className="calendar-header-spacer" />
+          <div className="calendar-header" style={{ "--week-count": weekColumns.length }}>
+            {weekColumns.map((week) => (
+              <div key={week.index} className="calendar-week-header">
+                <span>{week.label}</span>
+                <strong>{week.shortLabel}</strong>
+              </div>
+            ))}
+          </div>
+
+          {loading ? (
+            <section className="loading-panel inset">
+              <div className="spinner" />
+              <p>Loading delivery data and Jira work...</p>
+            </section>
+          ) : (
+            teamRows.map(({ member, items }) => (
+              <TeamCalendarRow
+                key={member.id}
+                member={member}
+                weeks={weekColumns}
+                items={items}
+                jiraOverrides={jiraOverrides}
+                dragging={Boolean(draggingId)}
+                onDropItem={handleDropItem}
+                onEditItem={openTask}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+              />
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="ops-panel">
+        <div className="section-headline">
+          <div>
+            <div className="section-eyebrow">Operational detail</div>
+            <h2>Jira work feeding the calendar</h2>
+          </div>
+        </div>
+        <div className="ops-grid">
+          {opsBacklog.length ? (
+            opsBacklog.map((item) => {
+              const owner = findMember(item.memberId);
+              const timeline = itemTimeline(item, jiraOverrides);
+              return (
+                <div key={item.id} className="ops-ticket" style={{ "--card-accent": owner?.color || "#475569" }}>
+                  <div className="ops-ticket-head">
+                    <span>{item.jiraKey}</span>
+                    <span>{owner?.name || "Unassigned"}</span>
+                  </div>
+                  <button className="ops-ticket-title" onClick={() => openTask(item)}>
+                    <strong>{item.title}</strong>
+                  </button>
+                  <p>{item.status || "Operational"}</p>
+                  <div className="ops-ticket-meta">
+                    <span>{fmtRange(timeline.startKey, timeline.endKey)}</span>
+                    {item.jiraKey ? (
+                      <a
+                        href={`${JIRA_BASE}/${item.jiraKey}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        Open in Jira
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <p className="empty-copy">No Jira operational items match the current filters.</p>
+          )}
+        </div>
+      </section>
 
       {showTaskModal ? (
         <div className="modal-backdrop" onClick={() => setShowTaskModal(false)}>
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-head">
               <div>
-                <div className="section-eyebrow">{editingAssignment?.fromJira ? "Operational item" : "Planned delivery item"}</div>
-                <h3>{editingAssignment ? "Edit item" : "New project item"}</h3>
+                <div className="section-eyebrow">{editingAssignment?.fromJira ? "Jira assignment" : "Planned assignment"}</div>
+                <h3>{editingAssignment ? "Edit assignment" : "New assignment"}</h3>
               </div>
               <button className="icon-button" onClick={() => setShowTaskModal(false)}>
                 x
@@ -1140,7 +857,7 @@ export default function App() {
             </label>
 
             <label>
-              <span>Owner</span>
+              <span>Team member</span>
               <select value={taskForm.memberId} onChange={(event) => setTaskForm((current) => ({ ...current, memberId: Number(event.target.value) }))}>
                 {TEAM_MEMBERS.map((member) => (
                   <option key={member.id} value={member.id}>
@@ -1150,20 +867,18 @@ export default function App() {
               </select>
             </label>
 
-            {!editingAssignment?.fromJira ? (
-              <div className="modal-grid">
-                <label>
-                  <span>Start date</span>
-                  <input type="date" value={taskForm.startKey} onChange={(event) => setTaskForm((current) => ({ ...current, startKey: event.target.value }))} />
-                </label>
-                <label>
-                  <span>End date</span>
-                  <input type="date" value={taskForm.endKey} min={taskForm.startKey} onChange={(event) => setTaskForm((current) => ({ ...current, endKey: event.target.value }))} />
-                </label>
-              </div>
-            ) : null}
+            <div className="modal-grid">
+              <label>
+                <span>Start date</span>
+                <input type="date" value={taskForm.startKey} onChange={(event) => setTaskForm((current) => ({ ...current, startKey: event.target.value }))} />
+              </label>
+              <label>
+                <span>End date</span>
+                <input type="date" value={taskForm.endKey} min={taskForm.startKey} onChange={(event) => setTaskForm((current) => ({ ...current, endKey: event.target.value }))} />
+              </label>
+            </div>
 
-            {editingAssignment?.fromJira && editingAssignment?.jiraKey ? (
+            {editingAssignment?.jiraKey ? (
               <a className="link-button" href={`${JIRA_BASE}/${editingAssignment.jiraKey}`} target="_blank" rel="noreferrer">
                 Open {editingAssignment.jiraKey} in Jira
               </a>
@@ -1171,120 +886,12 @@ export default function App() {
 
             <div className="modal-actions">
               {editingAssignment ? (
-                <button className="danger-button" onClick={() => deleteTask(editingAssignment.id)}>
-                  Delete
+                <button className="danger-button" onClick={() => deleteTask(editingAssignment)}>
+                  {editingAssignment.fromJira ? "Remove from local plan" : "Delete"}
                 </button>
               ) : null}
               <button className="primary-button" onClick={saveTask}>
-                {editingAssignment ? "Save changes" : "Add item"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showMilestoneModal ? (
-        <div className="modal-backdrop" onClick={() => setShowMilestoneModal(false)}>
-          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <div className="section-eyebrow">Milestone</div>
-                <h3>{editingMilestone ? "Edit milestone" : "New milestone"}</h3>
-              </div>
-              <button className="icon-button" onClick={() => setShowMilestoneModal(false)}>
-                x
-              </button>
-            </div>
-
-            <label>
-              <span>Milestone name</span>
-              <input value={milestoneForm.title} onChange={(event) => setMilestoneForm((current) => ({ ...current, title: event.target.value }))} />
-            </label>
-
-            <label>
-              <span>Date</span>
-              <input type="date" value={milestoneForm.dateKey} onChange={(event) => setMilestoneForm((current) => ({ ...current, dateKey: event.target.value }))} />
-            </label>
-
-            <div>
-              <span className="field-label">Color tag</span>
-              <div className="color-palette">
-                {MILESTONE_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    className={milestoneForm.color === color ? "color-swatch active" : "color-swatch"}
-                    style={{ background: color }}
-                    onClick={() => setMilestoneForm((current) => ({ ...current, color }))}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="modal-actions">
-              {editingMilestone ? (
-                <button className="danger-button" onClick={() => deleteMilestone(editingMilestone.id)}>
-                  Delete
-                </button>
-              ) : null}
-              <button className="primary-button" onClick={saveMilestone}>
-                {editingMilestone ? "Save milestone" : "Add milestone"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showPriorityModal ? (
-        <div className="modal-backdrop" onClick={() => setShowPriorityModal(false)}>
-          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <div className="section-eyebrow">Upcoming priority</div>
-                <h3>{editingPriority ? "Edit priority" : "New priority"}</h3>
-              </div>
-              <button className="icon-button" onClick={() => setShowPriorityModal(false)}>
-                x
-              </button>
-            </div>
-
-            <label>
-              <span>Title</span>
-              <input value={priorityForm.title} onChange={(event) => setPriorityForm((current) => ({ ...current, title: event.target.value }))} />
-            </label>
-
-            <div className="modal-grid">
-              <label>
-                <span>Start date</span>
-                <input type="date" value={priorityForm.startKey} onChange={(event) => setPriorityForm((current) => ({ ...current, startKey: event.target.value }))} />
-              </label>
-              <label>
-                <span>End date</span>
-                <input type="date" value={priorityForm.endKey} min={priorityForm.startKey} onChange={(event) => setPriorityForm((current) => ({ ...current, endKey: event.target.value }))} />
-              </label>
-            </div>
-
-            <div>
-              <span className="field-label">Color tag</span>
-              <div className="color-palette">
-                {PRIORITY_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    className={priorityForm.color === color ? "color-swatch active" : "color-swatch"}
-                    style={{ background: color }}
-                    onClick={() => setPriorityForm((current) => ({ ...current, color }))}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="modal-actions">
-              {editingPriority ? (
-                <button className="danger-button" onClick={() => deletePriority(editingPriority.id)}>
-                  Delete
-                </button>
-              ) : null}
-              <button className="primary-button" onClick={savePriority}>
-                {editingPriority ? "Save priority" : "Add priority"}
+                {editingAssignment ? "Save changes" : "Add assignment"}
               </button>
             </div>
           </div>
@@ -1292,6 +899,75 @@ export default function App() {
       ) : null}
     </div>
   );
+}
+
+async function fetchManualAssignments() {
+  const response = await fetch("/api/assignments");
+  const stored = await response.json();
+  const savedAssignments = Array.isArray(stored)
+    ? stored.map((row) => ({
+        id: row.id,
+        title: row.title,
+        memberId: row.member_id,
+        startKey: row.start_key,
+        endKey: row.end_key,
+        fromJira: row.from_jira,
+        jiraKey: row.jira_key,
+        status: row.status,
+        dueDateKey: row.due_date_key,
+        resolvedKey: row.resolved_key,
+        isDone: row.is_done,
+      }))
+    : [];
+
+  return savedAssignments.filter((item) => !item.fromJira);
+}
+
+async function fetchJiraAssignments() {
+  const [activeResponse, doneResponse] = await Promise.all([
+    fetch(
+      `/api/jira?jql=${encodeURIComponent(
+        'status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC'
+      )}`
+    ),
+    fetch(
+      `/api/jira?jql=${encodeURIComponent(
+        'status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC'
+      )}`
+    ),
+  ]);
+
+  const activeData = await activeResponse.json();
+  const doneData = await doneResponse.json();
+
+  const mapIssue = (issue, isDone) => {
+    const { summary, assignee, duedate } = issue.fields;
+    const normalizedDisplayName = assignee?.displayName?.toLowerCase() || "";
+    const member = TEAM_MEMBERS.find((person) => normalizedDisplayName.includes(person.name.split(" ")[0].toLowerCase()));
+    if (!member) return null;
+
+    const dueDateKey = duedate ? dateKey(parseDate(duedate)) : null;
+    const resolved = issue.fields.transitionDate || issue.fields.resolutiondate;
+
+    return {
+      id: `jira-${issue.id}`,
+      title: summary,
+      memberId: member.id,
+      startKey: null,
+      endKey: null,
+      fromJira: true,
+      jiraKey: issue.key,
+      status: issue.fields.status?.name,
+      dueDateKey,
+      resolvedKey: resolved ? dateKey(new Date(resolved)) : null,
+      isDone,
+    };
+  };
+
+  return [
+    ...(activeData.issues || []).map((issue) => mapIssue(issue, false)),
+    ...(doneData.issues || []).map((issue) => mapIssue(issue, true)),
+  ].filter(Boolean);
 }
 
 async function persistAssignments(list, setSaveStatus) {
@@ -1304,7 +980,7 @@ async function persistAssignments(list, setSaveStatus) {
     });
     if (!response.ok) throw new Error("Save failed");
     setSaveStatus("saved");
-    window.setTimeout(() => setSaveStatus(null), 2000);
+    window.setTimeout(() => setSaveStatus(null), 1800);
   } catch (error) {
     console.error("Persist failed", error);
     setSaveStatus("error");
