@@ -13,6 +13,8 @@ const HORIZON_OPTIONS = [30, 60, 90];
 const DEFAULT_HORIZON = 60;
 const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
 const JIRA_OVERRIDE_STORAGE_KEY = "jiraScheduleOverrides";
+const ACTIVE_JIRA_JQL = 'statusCategory != Done AND assignee is not EMPTY ORDER BY duedate ASC, updated DESC';
+const DONE_JIRA_JQL = 'statusCategory = Done AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC';
 
 const TODAY = new Date();
 TODAY.setHours(0, 0, 0, 0);
@@ -336,12 +338,18 @@ export default function App() {
       setLoading(true);
       try {
         const manualAssignments = await fetchManualAssignments();
-        const jiraAssignments = await fetchJiraAssignments();
-        const merged = [...manualAssignments, ...jiraAssignments];
+        const jiraResult = await fetchJiraAssignments();
+        const merged = [...manualAssignments, ...jiraResult.items];
 
         if (!cancelled) {
           setAssignments(merged);
           await persistAssignments(manualAssignments, setSaveStatus);
+          if (jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0) {
+            setSyncStatus({
+              type: "error",
+              message: "Jira connected, but the current search returned 0 issues. This usually means the project, permissions, or workflow filters need adjustment.",
+            });
+          }
         }
       } catch (error) {
         console.error("Initial load failed", error);
@@ -584,12 +592,15 @@ export default function App() {
     setSyncStatus(null);
     try {
       const manualAssignments = assignments.filter((item) => !item.fromJira);
-      const jiraAssignments = await fetchJiraAssignments();
-      setAssignments([...manualAssignments, ...jiraAssignments]);
+      const jiraResult = await fetchJiraAssignments();
+      setAssignments([...manualAssignments, ...jiraResult.items]);
       scheduleManualPersist(manualAssignments);
       setSyncStatus({
         type: "success",
-        message: `Synced ${jiraAssignments.filter((item) => !item.isDone).length} active Jira items and preserved manual project blocks.`,
+        message:
+          jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0
+            ? "Jira connected, but the search returned 0 issues. Check project scope, assignees, or Jira permissions."
+            : `Fetched ${jiraResult.stats.rawActive} active and ${jiraResult.stats.rawDone} done Jira issues. Mapped ${jiraResult.stats.mappedActive} active items to your team and preserved manual project blocks.`,
       });
     } catch (error) {
       console.error("Jira sync failed", error);
@@ -943,16 +954,8 @@ async function fetchManualAssignments() {
 
 async function fetchJiraAssignments() {
   const [activeResponse, doneResponse] = await Promise.all([
-    fetch(
-      `/api/jira?jql=${encodeURIComponent(
-        'status in ("Ready to Work","In Progress","Testing","Ready for Release","Selected for Development") AND assignee is not EMPTY ORDER BY duedate ASC'
-      )}`
-    ),
-    fetch(
-      `/api/jira?jql=${encodeURIComponent(
-        'status in ("Done","Deployed") AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC'
-      )}`
-    ),
+    fetch(`/api/jira?jql=${encodeURIComponent(ACTIVE_JIRA_JQL)}`),
+    fetch(`/api/jira?jql=${encodeURIComponent(DONE_JIRA_JQL)}`),
   ]);
 
   const activeData = await activeResponse.json().catch(() => ({}));
@@ -989,10 +992,18 @@ async function fetchJiraAssignments() {
     };
   };
 
-  return [
-    ...(activeData.issues || []).map((issue) => mapIssue(issue, false)),
-    ...(doneData.issues || []).map((issue) => mapIssue(issue, true)),
-  ].filter(Boolean);
+  const activeMapped = (activeData.issues || []).map((issue) => mapIssue(issue, false)).filter(Boolean);
+  const doneMapped = (doneData.issues || []).map((issue) => mapIssue(issue, true)).filter(Boolean);
+
+  return {
+    items: [...activeMapped, ...doneMapped],
+    stats: {
+      rawActive: (activeData.issues || []).length,
+      rawDone: (doneData.issues || []).length,
+      mappedActive: activeMapped.length,
+      mappedDone: doneMapped.length,
+    },
+  };
 }
 
 async function persistAssignments(list, setSaveStatus) {
