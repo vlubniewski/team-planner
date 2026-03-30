@@ -327,7 +327,7 @@ export default function App() {
         }
       } catch (error) {
         console.error("Initial load failed", error);
-        if (!cancelled) setSyncStatus({ type: "error", message: "Unable to load team assignments and Jira items." });
+        if (!cancelled) setSyncStatus({ type: "error", message: error.message || "Unable to load team assignments and Jira items." });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -575,7 +575,7 @@ export default function App() {
       });
     } catch (error) {
       console.error("Jira sync failed", error);
-      setSyncStatus({ type: "error", message: "Sync failed. Check Jira environment variables and token." });
+      setSyncStatus({ type: "error", message: error.message || "Sync failed. Check Jira environment variables and token." });
     } finally {
       setSyncing(false);
     }
@@ -937,8 +937,16 @@ async function fetchJiraAssignments() {
     ),
   ]);
 
-  const activeData = await activeResponse.json();
-  const doneData = await doneResponse.json();
+  const activeData = await activeResponse.json().catch(() => ({}));
+  const doneData = await doneResponse.json().catch(() => ({}));
+
+  if (!activeResponse.ok) {
+    throw new Error(activeData.error || "Active Jira sync failed.");
+  }
+
+  if (!doneResponse.ok) {
+    throw new Error(doneData.error || "Completed Jira sync failed.");
+  }
 
   const mapIssue = (issue, isDone) => {
     const { summary, assignee, duedate } = issue.fields;

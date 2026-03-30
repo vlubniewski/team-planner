@@ -4,7 +4,13 @@ export default async function handler(req, res) {
   if (!requireAuth(req, res)) return;
 
   const { JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY } = process.env;
-  const domain = process.env.VITE_JIRA_DOMAIN;
+  const domain = process.env.JIRA_DOMAIN || process.env.VITE_JIRA_DOMAIN;
+
+  if (!domain || !JIRA_EMAIL || !JIRA_API_TOKEN) {
+    return res.status(500).json({
+      error: "Jira environment variables are missing. Expected JIRA_DOMAIN (or VITE_JIRA_DOMAIN), JIRA_EMAIL, and JIRA_API_TOKEN.",
+    });
+  }
 
   const auth = `Basic ${Buffer.from(`${JIRA_EMAIL}:${JIRA_API_TOKEN}`).toString("base64")}`;
   const headers = { Authorization: auth, Accept: "application/json" };
@@ -16,7 +22,16 @@ export default async function handler(req, res) {
   const url = `https://${domain}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=100&fields=summary,assignee,duedate,created,status,resolutiondate`;
 
   const response = await fetch(url, { headers });
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    return res.status(response.status).json({
+      error: data.errorMessages?.join(" ") || data.errors?.summary || data.message || "Jira request failed.",
+      jiraStatus: response.status,
+      domain,
+      jql,
+    });
+  }
 
   const isDoneQuery = req.query.jql && req.query.jql.includes("Done");
 
@@ -29,7 +44,8 @@ export default async function handler(req, res) {
             `https://${domain}/rest/api/3/issue/${issue.key}/changelog`,
             { headers }
           );
-          const cl = await clRes.json();
+          const cl = await clRes.json().catch(() => ({}));
+          if (!clRes.ok) return issue;
           // Find the most recent transition TO Done or Deployed
           let transitionDate = null;
           const entries = (cl.values || []).slice().reverse(); // most recent first
