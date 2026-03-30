@@ -10,7 +10,7 @@ const TEAM_MEMBERS = [
 
 const HORIZON_OPTIONS = [28, 42, 56, 84];
 const DEFAULT_HORIZON = 28;
-const ACTIVE_JIRA_JQL = 'issuetype IN ("[System] Incident", "[System] Service request", Story, "Sub-task", Task, Bug) AND project != ITDS ORDER BY priority DESC, due ASC';
+const ACTIVE_JIRA_JQL = 'issuetype IN ("[System] Incident", "[System] Service request", Story, "Sub-task", Task, Bug) AND project != ITDS AND assignee is not EMPTY ORDER BY priority DESC, duedate ASC';
 const DONE_JIRA_JQL = 'statusCategory = Done AND assignee is not EMPTY AND resolutiondate >= -45d ORDER BY resolutiondate DESC';
 const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
 
@@ -433,6 +433,27 @@ function TeamKeyCard({ member, count, active, onClick }) {
   );
 }
 
+function buildJiraSyncStatus(stats) {
+  if (stats.rawActive === 0 && stats.rawDone === 0) {
+    return {
+      type: "error",
+      message: "Jira is connected, but the current queries returned no issues. Check the JQL, permissions, or project scope.",
+    };
+  }
+
+  if (stats.mappedActive === 0 && stats.mappedDone === 0) {
+    return {
+      type: "error",
+      message: `Jira returned ${stats.rawActive} active and ${stats.rawDone} done issues, but none mapped to the team names configured in the app.`,
+    };
+  }
+
+  return {
+    type: "success",
+    message: `Synced ${stats.mappedActive} active and ${stats.mappedDone} done team items from ${stats.rawActive + stats.rawDone} Jira results.`,
+  };
+}
+
 function ModalFrame({ title, eyebrow, onClose, children }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -549,13 +570,7 @@ export default function App() {
 
         setJiraItems(jiraResult.items);
         setReadyItems(readyResult);
-        setSyncStatus({
-          type: jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0 ? "error" : "success",
-          message:
-            jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0
-              ? "Jira is connected, but the current queries returned no issues. Check project scope, assignees, or permissions."
-              : `Synced ${jiraResult.stats.rawActive} active and ${jiraResult.stats.rawDone} recently done Jira issues.`,
-        });
+        setSyncStatus(buildJiraSyncStatus(jiraResult.stats));
         setIsHydrated(true);
       } catch (error) {
         if (!cancelled) {
@@ -865,13 +880,7 @@ export default function App() {
       const [jiraResult, readyResult] = await Promise.all([fetchJiraAssignments(), fetchReadyToWorkOptions()]);
       setJiraItems(jiraResult.items);
       setReadyItems(readyResult);
-      setSyncStatus({
-        type: jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0 ? "error" : "success",
-        message:
-          jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0
-            ? "Jira connected, but no issues matched the current query."
-            : `Fetched ${jiraResult.stats.rawActive} active and ${jiraResult.stats.rawDone} recently completed Jira issues.`,
-      });
+      setSyncStatus(buildJiraSyncStatus(jiraResult.stats));
     } catch (error) {
       setSyncStatus({ type: "error", message: error.message || "Jira sync failed." });
     } finally {
@@ -1407,6 +1416,8 @@ async function fetchJiraAssignments() {
     stats: {
       rawActive: (activeData.issues || []).length,
       rawDone: (doneData.issues || []).length,
+      mappedActive: activeMapped.length,
+      mappedDone: doneMapped.length,
     },
   };
 }
