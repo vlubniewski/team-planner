@@ -10,7 +10,7 @@ const TEAM_MEMBERS = [
 
 const HORIZON_OPTIONS = [90, 180, 365];
 const DEFAULT_HORIZON = 180;
-const ACTIVE_JIRA_JQL = 'statusCategory != Done AND assignee is not EMPTY ORDER BY duedate ASC, updated DESC';
+const ACTIVE_JIRA_JQL = 'issuetype IN ("[System] Incident", "[System] Service request", Story, "Sub-task", Task, Bug) AND project != ITDS ORDER BY priority DESC, due ASC';
 const DONE_JIRA_JQL = 'statusCategory = Done AND assignee is not EMPTY AND resolutiondate >= -45d ORDER BY resolutiondate DESC';
 const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
 
