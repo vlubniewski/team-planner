@@ -267,6 +267,7 @@ export default function App() {
   const [loginSubmitting, setLoginSubmitting] = useState(false);
 
   const [assignments, setAssignments] = useState([]);
+  const [readyToWorkOptions, setReadyToWorkOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
@@ -338,11 +339,12 @@ export default function App() {
       setLoading(true);
       try {
         const manualAssignments = await fetchManualAssignments();
-        const jiraResult = await fetchJiraAssignments();
+        const [jiraResult, readyOptions] = await Promise.all([fetchJiraAssignments(), fetchReadyToWorkOptions()]);
         const merged = [...manualAssignments, ...jiraResult.items];
 
         if (!cancelled) {
           setAssignments(merged);
+          setReadyToWorkOptions(readyOptions);
           await persistAssignments(manualAssignments, setSaveStatus);
           if (jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0) {
             setSyncStatus({
@@ -592,8 +594,9 @@ export default function App() {
     setSyncStatus(null);
     try {
       const manualAssignments = assignments.filter((item) => !item.fromJira);
-      const jiraResult = await fetchJiraAssignments();
+      const [jiraResult, readyOptions] = await Promise.all([fetchJiraAssignments(), fetchReadyToWorkOptions()]);
       setAssignments([...manualAssignments, ...jiraResult.items]);
+      setReadyToWorkOptions(readyOptions);
       scheduleManualPersist(manualAssignments);
       setSyncStatus({
         type: "success",
@@ -826,6 +829,37 @@ export default function App() {
       <section className="ops-panel">
         <div className="section-headline">
           <div>
+            <div className="section-eyebrow">WOPS board</div>
+            <h2>Ready to Work items with due dates</h2>
+          </div>
+        </div>
+        <div className="ops-grid">
+          {readyToWorkOptions.length ? (
+            readyToWorkOptions.map((item) => (
+              <div key={item.id} className="ops-ticket ready-ticket">
+                <div className="ops-ticket-head">
+                  <span>{item.jiraKey}</span>
+                  <span>{item.assigneeName || "Unassigned"}</span>
+                </div>
+                <strong>{item.title}</strong>
+                <p>{item.dueDateKey ? `Due ${fmtDate(item.dueDateKey, { month: "long", day: "numeric", year: "numeric" })}` : "No due date"}</p>
+                <div className="ops-ticket-meta">
+                  <span>{item.status}</span>
+                  <a href={`${JIRA_BASE}/${item.jiraKey}`} target="_blank" rel="noreferrer">
+                    Open in Jira
+                  </a>
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="empty-copy">No due Jira items are currently in Ready to Work on the WOPS board.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="ops-panel">
+        <div className="section-headline">
+          <div>
             <div className="section-eyebrow">Operational detail</div>
             <h2>Jira work feeding the calendar</h2>
           </div>
@@ -1004,6 +1038,27 @@ async function fetchJiraAssignments() {
       mappedDone: doneMapped.length,
     },
   };
+}
+
+async function fetchReadyToWorkOptions() {
+  const response = await fetch("/api/jira?view=readyDue");
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error || "Unable to load Ready to Work Jira items.");
+  }
+
+  return (data.issues || []).map((issue) => {
+    const { summary, assignee, duedate, status } = issue.fields;
+    return {
+      id: `ready-${issue.id}`,
+      jiraKey: issue.key,
+      title: summary,
+      assigneeName: assignee?.displayName || "",
+      dueDateKey: duedate ? dateKey(parseDate(duedate)) : null,
+      status: status?.name || "Ready to Work",
+    };
+  });
 }
 
 async function persistAssignments(list, setSaveStatus) {

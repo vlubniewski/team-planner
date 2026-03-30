@@ -585,6 +585,11 @@ button:disabled {
   font-weight: 700;
 }
 
+.ready-ticket {
+  border-left-color: #d97706;
+  background: linear-gradient(180deg, #fffaf0 0%, #ffffff 72%);
+}
+
 .loading-panel {
   display: grid;
   place-items: center;

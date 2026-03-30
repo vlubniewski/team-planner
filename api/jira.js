@@ -15,9 +15,11 @@ export default async function handler(req, res) {
   const auth = `Basic ${Buffer.from(`${JIRA_EMAIL}:${JIRA_API_TOKEN}`).toString("base64")}`;
   const headers = { Authorization: auth, Accept: "application/json" };
 
-  const jql = req.query.jql
-    ? req.query.jql
-    : `project = ${JIRA_PROJECT_KEY} ORDER BY created DESC`;
+  const jql = req.query.view === "readyDue"
+    ? `project = ${JIRA_PROJECT_KEY} AND status = "Ready to Work" AND duedate is not EMPTY ORDER BY duedate ASC`
+    : req.query.jql
+      ? req.query.jql
+      : `project = ${JIRA_PROJECT_KEY} ORDER BY created DESC`;
 
   const url = `https://${domain}/rest/api/3/search/jql`;
   const response = await fetch(url, {
