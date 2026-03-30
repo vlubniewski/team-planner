@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const TEAM_MEMBERS = [
-  { id: 1, name: "Ryan Geraghty", role: "Director, Software Development", color: "#0f766e", initials: "RG" },
-  { id: 2, name: "Michael Santilli", role: "Sr. Web Developer", color: "#2563eb", initials: "MS" },
-  { id: 3, name: "John Kaeser", role: "Sr. Developer", color: "#c2410c", initials: "JK" },
-  { id: 4, name: "Jason Moore", role: "Web Developer", color: "#7c3aed", initials: "JM" },
+  { id: 1, name: "Ryan Geraghty", role: "Director, Software Development", color: "#0f766e", initials: "RG", jiraAliases: ["ryan geraghty", "ryan"] },
+  { id: 2, name: "Michael Santilli", role: "Sr. Web Developer", color: "#2563eb", initials: "MS", jiraAliases: ["michael santilli", "michael", "mike santilli", "mike"] },
+  { id: 3, name: "John Kaeser", role: "Sr. Developer", color: "#c2410c", initials: "JK", jiraAliases: ["john kaeser", "john"] },
+  { id: 4, name: "Jason Moore", role: "Web Developer", color: "#7c3aed", initials: "JM", jiraAliases: ["jason moore", "jason"] },
 ];
 
 const ACTIVE_STATUSES = ["Ready to Work", "Selected for Development", "In Progress", "Testing", "Ready for Release"];
@@ -89,6 +89,24 @@ function weeksTouched(item, weeks, jiraOverrides) {
 
 function findMember(memberId) {
   return TEAM_MEMBERS.find((member) => member.id === memberId);
+}
+
+function normalizeName(value) {
+  return (value || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function findMemberByAssignee(assignee) {
+  const displayName = normalizeName(assignee?.displayName);
+  if (!displayName) return null;
+
+  return (
+    TEAM_MEMBERS.find((member) => (member.jiraAliases || []).some((alias) => displayName.includes(alias))) ||
+    TEAM_MEMBERS.find((member) => {
+      const parts = normalizeName(member.name).split(" ");
+      return parts.every((part) => displayName.includes(part));
+    }) ||
+    null
+  );
 }
 
 function chipLabel(count, singular, plural = `${singular}s`) {
@@ -950,8 +968,7 @@ async function fetchJiraAssignments() {
 
   const mapIssue = (issue, isDone) => {
     const { summary, assignee, duedate } = issue.fields;
-    const normalizedDisplayName = assignee?.displayName?.toLowerCase() || "";
-    const member = TEAM_MEMBERS.find((person) => normalizedDisplayName.includes(person.name.split(" ")[0].toLowerCase()));
+    const member = findMemberByAssignee(assignee);
     if (!member) return null;
 
     const dueDateKey = duedate ? dateKey(parseDate(duedate)) : null;

@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     ? req.query.jql
     : `project = ${JIRA_PROJECT_KEY} ORDER BY created DESC`;
 
-  const url = `https://${domain}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=100&fields=summary,assignee,duedate,created,status,resolutiondate`;
+  const url = `https://${domain}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=100&fields=summary,assignee,duedate,created,status,resolutiondate`;
 
   const response = await fetch(url, { headers });
   const data = await response.json().catch(() => ({}));
