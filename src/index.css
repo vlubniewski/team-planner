@@ -1,5 +1,5 @@
 :root {
-  font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   color: #10233f;
@@ -24,11 +24,13 @@ body,
 
 body {
   min-height: 100vh;
+  background: #eef2f7;
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 

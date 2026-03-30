@@ -8,17 +8,24 @@ const TEAM_MEMBERS = [
   { id: 4, name: "Jason Moore", role: "Web Developer", color: "#7c3aed", initials: "JM", jiraAliases: ["jason moore", "jason"] },
 ];
 
-const ACTIVE_STATUSES = ["Ready to Work", "Selected for Development", "In Progress", "Testing", "Ready for Release"];
-const HORIZON_OPTIONS = [30, 60, 90];
-const DEFAULT_HORIZON = 60;
-const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
-const JIRA_OVERRIDE_STORAGE_KEY = "jiraScheduleOverrides";
+const HORIZON_OPTIONS = [90, 180, 365];
+const DEFAULT_HORIZON = 180;
 const ACTIVE_JIRA_JQL = 'statusCategory != Done AND assignee is not EMPTY ORDER BY duedate ASC, updated DESC';
-const DONE_JIRA_JQL = 'statusCategory = Done AND assignee is not EMPTY AND resolutiondate >= -30d ORDER BY resolutiondate DESC';
+const DONE_JIRA_JQL = 'statusCategory = Done AND assignee is not EMPTY AND resolutiondate >= -45d ORDER BY resolutiondate DESC';
+const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
 
-const TODAY = new Date();
-TODAY.setHours(0, 0, 0, 0);
+const PROJECTS_STORAGE_KEY = "teamPlannerProjectsV2";
+const PRIORITIES_STORAGE_KEY = "teamPlannerPrioritiesV1";
+const LEGACY_IMPORT_KEY = "teamPlannerImportedLegacyAssignments";
+
+const TODAY = startOfDay(new Date());
 const TODAY_KEY = dateKey(TODAY);
+
+function startOfDay(date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
 
 function dateKey(date) {
   const local = new Date(date);
@@ -36,65 +43,57 @@ function addDays(date, amount) {
   return next;
 }
 
-function diffDaysInclusive(startKey, endKey) {
-  if (!startKey || !endKey) return 1;
-  return Math.max(1, Math.round((parseDate(endKey) - parseDate(startKey)) / 86400000) + 1);
+function diffDays(startKey, endKey) {
+  return Math.round((parseDate(endKey) - parseDate(startKey)) / 86400000);
 }
 
-function fmtDate(key, options = { month: "short", day: "numeric" }) {
+function clampDateRange(startKey, endKey) {
+  if (!startKey && !endKey) return { startKey: TODAY_KEY, endKey: TODAY_KEY };
+  if (!startKey) return { startKey: endKey, endKey };
+  if (!endKey) return { startKey, endKey: startKey };
+  if (endKey < startKey) return { startKey: endKey, endKey: startKey };
+  return { startKey, endKey };
+}
+
+function formatDate(key, options = { month: "short", day: "numeric" }) {
   if (!key) return "Unscheduled";
   return parseDate(key).toLocaleDateString("en-US", options);
 }
 
-function fmtRange(startKey, endKey) {
-  if (!startKey && !endKey) return "Needs schedule";
-  if (!endKey || startKey === endKey) return fmtDate(startKey || endKey);
-  return `${fmtDate(startKey)} - ${fmtDate(endKey)}`;
+function formatRange(startKey, endKey) {
+  if (!startKey && !endKey) return "No dates";
+  if (!endKey || startKey === endKey) return formatDate(startKey || endKey);
+  return `${formatDate(startKey)} - ${formatDate(endKey)}`;
 }
 
-function getWeekStart(date) {
-  const next = new Date(date);
-  const day = next.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  next.setDate(next.getDate() + diff);
-  next.setHours(0, 0, 0, 0);
-  return next;
-}
-
-function buildWeekColumns(days) {
-  const weekCount = Math.ceil(days / 7);
-  const start = getWeekStart(TODAY);
-  return Array.from({ length: weekCount }, (_, index) => {
-    const weekStart = addDays(start, index * 7);
-    const weekEnd = addDays(weekStart, 6);
-    return {
-      index,
-      startKey: dateKey(weekStart),
-      endKey: dateKey(weekEnd),
-      label: `Week of ${fmtDate(dateKey(weekStart), { month: "short", day: "numeric" })}`,
-      shortLabel: fmtDate(dateKey(weekStart), { month: "short", day: "numeric" }),
-    };
-  });
-}
-
-function itemTimeline(item, jiraOverrides) {
-  const override = item.fromJira ? jiraOverrides[item.id] : null;
-  const startKey = item.startKey || override?.startKey || item.dueDateKey || item.resolvedKey || TODAY_KEY;
-  const endKey = item.endKey || override?.endKey || item.dueDateKey || item.resolvedKey || startKey;
-  return { startKey, endKey };
-}
-
-function weeksTouched(item, weeks, jiraOverrides) {
-  const { startKey, endKey } = itemTimeline(item, jiraOverrides);
-  return weeks.filter((week) => startKey <= week.endKey && endKey >= week.startKey).map((week) => week.index);
-}
-
-function findMember(memberId) {
-  return TEAM_MEMBERS.find((member) => member.id === memberId);
+function getMonthLabel(key) {
+  return parseDate(key).toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
 function normalizeName(value) {
   return (value || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function readLocalStorage(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocalStorage(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findMember(memberId) {
+  return TEAM_MEMBERS.find((member) => member.id === memberId) || null;
 }
 
 function findMemberByAssignee(assignee) {
@@ -111,27 +110,174 @@ function findMemberByAssignee(assignee) {
   );
 }
 
+function buildDayColumns(days) {
+  const startDate = startOfDay(addDays(TODAY, -14));
+  return Array.from({ length: days }, (_, index) => {
+    const date = addDays(startDate, index);
+    return {
+      index,
+      key: dateKey(date),
+      dayLabel: date.toLocaleDateString("en-US", { weekday: "short" }).slice(0, 1),
+      dateLabel: date.toLocaleDateString("en-US", { day: "numeric" }),
+    };
+  });
+}
+
+function buildMonthGroups(dayColumns) {
+  const groups = [];
+  dayColumns.forEach((column, index) => {
+    const label = getMonthLabel(column.key);
+    const previous = groups.at(-1);
+    if (!previous || previous.label !== label) {
+      groups.push({ label, start: index, span: 1 });
+    } else {
+      previous.span += 1;
+    }
+  });
+  return groups;
+}
+
+function overlapsHorizon(startKey, endKey, horizonStartKey, horizonEndKey) {
+  if (!startKey && !endKey) return true;
+  const range = clampDateRange(startKey, endKey);
+  return range.startKey <= horizonEndKey && range.endKey >= horizonStartKey;
+}
+
+function getSpan(startKey, endKey, horizonStartKey, horizonEndKey) {
+  const range = clampDateRange(startKey, endKey);
+  const clampedStart = range.startKey < horizonStartKey ? horizonStartKey : range.startKey;
+  const clampedEnd = range.endKey > horizonEndKey ? horizonEndKey : range.endKey;
+  const start = diffDays(horizonStartKey, clampedStart) + 1;
+  const end = diffDays(horizonStartKey, clampedEnd) + 2;
+  return { start, end };
+}
+
+function getMarkerColumn(key, horizonStartKey) {
+  if (!key) return null;
+  return diffDays(horizonStartKey, key) + 1;
+}
+
+function statusTone(status) {
+  const value = (status || "").toLowerCase();
+  if (value.includes("risk")) return "risk";
+  if (value.includes("hold")) return "risk";
+  if (value.includes("done")) return "done";
+  if (value.includes("complete")) return "done";
+  if (value.includes("plan")) return "planned";
+  if (value.includes("active")) return "active";
+  if (value.includes("progress")) return "active";
+  return "planned";
+}
+
+function priorityLabel(priority) {
+  if (priority === "high") return "^";
+  if (priority === "low") return "v";
+  return "-";
+}
+
+function emptyProjectForm() {
+  return {
+    title: "",
+    ownerId: TEAM_MEMBERS[0].id,
+    startKey: TODAY_KEY,
+    endKey: dateKey(addDays(TODAY, 45)),
+    status: "In progress",
+    summary: "",
+  };
+}
+
+function emptyPriorityForm() {
+  return {
+    title: "",
+    priority: "medium",
+    ownerId: "",
+    targetKey: "",
+    summary: "",
+  };
+}
+
+function emptyMilestoneForm(projectId = "") {
+  return {
+    projectId,
+    title: "",
+    assigneeId: "",
+    dueKey: dateKey(addDays(TODAY, 14)),
+    doneKey: "",
+    status: "Due",
+  };
+}
+
 function chipLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function inferJiraWindow(item) {
+  const fallbackStart = item.createdKey || item.dueDateKey || TODAY_KEY;
+  const fallbackEnd = item.resolvedKey || item.dueDateKey || fallbackStart;
+  const range = clampDateRange(fallbackStart, fallbackEnd);
+  return {
+    startKey: item.isDone && !item.dueDateKey ? range.startKey : range.startKey,
+    endKey: item.isDone ? range.endKey : clampDateRange(range.startKey, item.dueDateKey || range.endKey).endKey,
+  };
+}
+
+function legacyAssignmentsToProjects(assignments) {
+  return assignments.map((item, index) => ({
+    id: `project-import-${index + 1}`,
+    title: item.title,
+    ownerId: item.memberId || TEAM_MEMBERS[0].id,
+    startKey: item.startKey || item.dueDateKey || TODAY_KEY,
+    endKey: item.endKey || item.dueDateKey || item.startKey || TODAY_KEY,
+    status: item.isDone ? "Done" : "Imported",
+    summary: "Imported from the previous planner view.",
+    expanded: true,
+    deliverables: [
+      {
+        id: `milestone-import-${index + 1}`,
+        title: item.title,
+        assigneeId: item.memberId || null,
+        dueKey: item.endKey || item.dueDateKey || item.startKey || TODAY_KEY,
+        doneKey: item.isDone ? item.resolvedKey || item.endKey || item.startKey || TODAY_KEY : "",
+        status: item.isDone ? "Done" : "Due",
+      },
+    ],
+  }));
+}
+
+function normalizeProjects(list) {
+  return (Array.isArray(list) ? list : []).map((project) => ({
+    ...project,
+    ownerId: project.ownerId || TEAM_MEMBERS[0].id,
+    expanded: project.expanded ?? true,
+    deliverables: Array.isArray(project.deliverables) ? project.deliverables : [],
+  }));
+}
+
+function normalizePriorities(list) {
+  return Array.isArray(list) ? list : [];
+}
+
 function SaveStatus({ status }) {
   if (!status) return null;
-  const labels = { saving: "Saving", saved: "Saved", error: "Save failed" };
+  const labels = {
+    saving: "Saving local plan",
+    saved: "Plan saved locally",
+    error: "Local save failed",
+  };
   return <span className={`save-status ${status}`}>{labels[status]}</span>;
 }
 
 function StatCard({ label, value, detail }) {
   return (
-    <div className="stat-card">
+    <article className="stat-card">
       <span>{label}</span>
       <strong>{value}</strong>
       <p>{detail}</p>
-    </div>
+    </article>
   );
 }
 
-function FilterChip({ active, label, onClick }) {
+function FilterChip({ active, onClick, label }) {
   return (
     <button className={`filter-chip ${active ? "active" : ""}`} onClick={onClick}>
       {label}
@@ -139,121 +285,283 @@ function FilterChip({ active, label, onClick }) {
   );
 }
 
-function WorkloadLegend() {
+function PriorityBadge({ priority }) {
+  return <span className={`priority-badge ${priority}`}>{priorityLabel(priority)}</span>;
+}
+
+function AuthScreen({ authConfigured, loginForm, setLoginForm, loginError, loginSubmitting, onLogin }) {
   return (
-    <div className="legend-row">
-      <div className="legend-item">
-        <span className="legend-swatch project" />
-        <span>Planned project work</span>
+    <div className="pm-app auth-app">
+      <section className="auth-card">
+        <div className="pm-badge">Secure access</div>
+        <h1>Executive project calendar</h1>
+        <p>Review strategic projects, synced Jira operations, and the team’s next priorities in one horizontal planning view.</p>
+        {!authConfigured ? (
+          <div className="auth-warning">
+            `APP_LOGIN_USER` and `APP_LOGIN_PASSWORD` are not configured, so the app cannot validate a login yet.
+          </div>
+        ) : null}
+        <form className="auth-form" onSubmit={onLogin}>
+          <label>
+            <span>Username</span>
+            <input
+              value={loginForm.username}
+              onChange={(event) => setLoginForm((current) => ({ ...current, username: event.target.value }))}
+              autoComplete="username"
+            />
+          </label>
+          <label>
+            <span>Password</span>
+            <input
+              type="password"
+              value={loginForm.password}
+              onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
+              autoComplete="current-password"
+            />
+          </label>
+          {loginError ? <div className="auth-error">{loginError}</div> : null}
+          <button className="primary-button" type="submit" disabled={loginSubmitting || !authConfigured}>
+            {loginSubmitting ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function TimelineScale({ dayColumns, monthGroups }) {
+  return (
+    <div className="timeline-scale">
+      <div className="timeline-scale-months" style={{ "--day-count": dayColumns.length }}>
+        {monthGroups.map((group) => (
+          <div
+            key={`${group.label}-${group.start}`}
+            className="timeline-month"
+            style={{ gridColumn: `${group.start + 1} / span ${group.span}` }}
+          >
+            {group.label}
+          </div>
+        ))}
       </div>
-      <div className="legend-item">
-        <span className="legend-swatch ops" />
-        <span>Jira operational work</span>
-      </div>
-      <div className="legend-item">
-        <span className="legend-swatch done" />
-        <span>Recently completed</span>
+      <div className="timeline-scale-days" style={{ "--day-count": dayColumns.length }}>
+        {dayColumns.map((column) => (
+          <div key={column.key} className={`timeline-day ${column.key === TODAY_KEY ? "today" : ""}`}>
+            <span>{column.dayLabel}</span>
+            <strong>{column.dateLabel}</strong>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function AssignmentCard({ item, jiraOverrides, onEdit, onDragStart, onDragEnd }) {
-  const owner = findMember(item.memberId);
-  const { startKey, endKey } = itemTimeline(item, jiraOverrides);
+function TimelineBar({ title, startKey, endKey, horizonStartKey, horizonEndKey, tone = "planned", subtitle, compact = false }) {
+  if (!overlapsHorizon(startKey, endKey, horizonStartKey, horizonEndKey)) return null;
+  const span = getSpan(startKey, endKey, horizonStartKey, horizonEndKey);
 
   return (
-    <button
-      draggable
-      className={`assignment-card ${item.fromJira ? "ops" : "project"} ${item.isDone ? "done" : ""}`}
-      style={{ "--card-accent": owner?.color || "#475569" }}
-      onClick={() => onEdit(item)}
-      onDragStart={(event) => onDragStart(event, item)}
-      onDragEnd={onDragEnd}
+    <div
+      className={`timeline-bar ${tone} ${compact ? "compact" : ""}`}
+      style={{ gridColumn: `${span.start} / ${span.end}` }}
+      title={`${title} · ${formatRange(startKey, endKey)}`}
     >
-      <div className="assignment-card-head">
-        <span className="assignment-type">{item.fromJira ? "Ops" : "Project"}</span>
-        <span className="assignment-owner">{owner?.initials || "TM"}</span>
-      </div>
-      <strong>{item.title}</strong>
-      <p>{fmtRange(startKey, endKey)}</p>
-      <div className="assignment-meta">
-        <span>{item.fromJira ? item.jiraKey || item.status || "Jira item" : `${diffDaysInclusive(startKey, endKey)} day block`}</span>
-        <span>{item.status || (item.isDone ? "Done" : "Scheduled")}</span>
-      </div>
-    </button>
+      <strong>{title}</strong>
+      {subtitle ? <span>{subtitle}</span> : null}
+    </div>
   );
 }
 
-function TeamCalendarRow({
-  member,
-  weeks,
-  items,
-  jiraOverrides,
-  dragging,
-  onDropItem,
-  onEditItem,
-  onDragStart,
-  onDragEnd,
-}) {
+function TimelineMarker({ type, label, dateKeyValue, horizonStartKey, horizonEndKey }) {
+  if (!dateKeyValue || dateKeyValue < horizonStartKey || dateKeyValue > horizonEndKey) return null;
+  const column = getMarkerColumn(dateKeyValue, horizonStartKey);
   return (
-    <div className="calendar-row">
-      <div className="calendar-row-meta">
-        <div className="member-lockup">
-          <div className="avatar" style={{ "--avatar-accent": member.color }}>
-            {member.initials}
-          </div>
-          <div>
-            <strong>{member.name}</strong>
-            <span>{member.role}</span>
+    <div className={`timeline-marker ${type}`} style={{ gridColumn: `${column} / span 1` }} title={`${label} · ${formatDate(dateKeyValue)}`}>
+      <span>{type === "done" ? "Done" : "Due"}</span>
+    </div>
+  );
+}
+
+function RowGrid({ dayCount, children }) {
+  return (
+    <div className="timeline-row-grid" style={{ "--day-count": dayCount }}>
+      {children}
+    </div>
+  );
+}
+
+function ProjectRow({
+  project,
+  horizonStartKey,
+  horizonEndKey,
+  dayCount,
+  onEditProject,
+  onAddMilestone,
+  onToggleExpanded,
+}) {
+  const owner = findMember(project.ownerId);
+  const doneCount = project.deliverables.filter((item) => item.doneKey).length;
+  const dueCount = project.deliverables.filter((item) => !item.doneKey).length;
+
+  return (
+    <>
+      <div className="timeline-label project parent">
+        <button className="tree-toggle" onClick={() => onToggleExpanded(project.id)}>
+          {project.expanded ? "−" : "+"}
+        </button>
+        <div className="label-stack">
+          <button className="label-title" onClick={() => onEditProject(project)}>
+            {project.title}
+          </button>
+          <div className="label-meta">
+            <span>{owner?.name || "No owner"}</span>
+            <span>{formatRange(project.startKey, project.endKey)}</span>
+            <span className={`tone-pill ${statusTone(project.status)}`}>{project.status}</span>
           </div>
         </div>
-        <div className="member-pills">
-          <span>{chipLabel(items.filter((item) => !item.fromJira && !item.isDone).length, "project")}</span>
-          <span>{chipLabel(items.filter((item) => item.fromJira && !item.isDone).length, "ops item", "ops items")}</span>
+        <div className="label-actions">
+          <span>{chipLabel(doneCount, "done item")}</span>
+          <span>{chipLabel(dueCount, "due item")}</span>
+          <button className="subtle-button" onClick={() => onAddMilestone(project.id)}>
+            Add item
+          </button>
         </div>
       </div>
+      <RowGrid dayCount={dayCount}>
+        <TimelineBar
+          title={project.title}
+          startKey={project.startKey}
+          endKey={project.endKey}
+          horizonStartKey={horizonStartKey}
+          horizonEndKey={horizonEndKey}
+          tone={statusTone(project.status)}
+          subtitle={owner?.initials || "TM"}
+        />
+      </RowGrid>
+    </>
+  );
+}
 
-      <div className="calendar-track" style={{ "--week-count": weeks.length }}>
-        <div className="calendar-week-grid" style={{ "--week-count": weeks.length }}>
-          {weeks.map((week) => (
-            <div
-              key={`${member.id}-${week.index}`}
-              className={`week-dropzone ${dragging ? "drop-active" : ""}`}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => onDropItem(member.id, week.startKey)}
-              title={`${member.name} · ${week.label}`}
-            />
-          ))}
+function DeliverableRow({ item, project, horizonStartKey, horizonEndKey, dayCount, onEditMilestone }) {
+  const owner = findMember(item.assigneeId);
+  const markerKey = item.doneKey || item.dueKey;
+
+  return (
+    <>
+      <div className="timeline-label project child">
+        <div className="tree-branch" />
+        <div className="label-stack">
+          <button className="label-title child" onClick={() => onEditMilestone(project.id, item)}>
+            {item.title}
+          </button>
+          <div className="label-meta">
+            <span>{owner?.name || "Unassigned"}</span>
+            <span>{item.doneKey ? `Done ${formatDate(item.doneKey)}` : `Due ${formatDate(item.dueKey)}`}</span>
+          </div>
         </div>
+      </div>
+      <RowGrid dayCount={dayCount}>
+        <TimelineBar
+          title={project.title}
+          startKey={project.startKey}
+          endKey={project.endKey}
+          horizonStartKey={horizonStartKey}
+          horizonEndKey={horizonEndKey}
+          tone="ghost"
+          compact
+        />
+        <TimelineMarker
+          type={item.doneKey ? "done" : "due"}
+          label={item.title}
+          dateKeyValue={markerKey}
+          horizonStartKey={horizonStartKey}
+          horizonEndKey={horizonEndKey}
+        />
+      </RowGrid>
+    </>
+  );
+}
 
-        <div className="calendar-items" style={{ "--week-count": weeks.length }}>
-          {items.map((item) => {
-            const touchedWeeks = weeksTouched(item, weeks, jiraOverrides);
-            if (!touchedWeeks.length) return null;
+function OpsMemberRow({ member, items, dayCount }) {
+  const openCount = items.filter((item) => !item.isDone).length;
+  const doneCount = items.filter((item) => item.isDone).length;
 
-            const firstIndex = touchedWeeks[0];
-            const lastIndex = touchedWeeks[touchedWeeks.length - 1];
-
-            return (
-              <div
-                key={item.id}
-                className="calendar-item-shell"
-                style={{
-                  gridColumn: `${firstIndex + 1} / ${lastIndex + 2}`,
-                }}
-              >
-                <AssignmentCard
-                  item={item}
-                  jiraOverrides={jiraOverrides}
-                  onEdit={onEditItem}
-                  onDragStart={onDragStart}
-                  onDragEnd={onDragEnd}
-                />
-              </div>
-            );
-          })}
+  return (
+    <>
+      <div className="timeline-label ops parent">
+        <div className="avatar" style={{ "--avatar-accent": member.color }}>
+          {member.initials}
         </div>
+        <div className="label-stack">
+          <strong className="ops-person-name">{member.name}</strong>
+          <div className="label-meta">
+            <span>{member.role}</span>
+            <span>{chipLabel(openCount, "active Jira item")}</span>
+            <span>{chipLabel(doneCount, "done Jira item")}</span>
+          </div>
+        </div>
+      </div>
+      <RowGrid dayCount={dayCount}>
+        <div className="ops-group-backdrop" />
+      </RowGrid>
+    </>
+  );
+}
+
+function OpsItemRow({ item, horizonStartKey, horizonEndKey, dayCount }) {
+  const member = findMember(item.memberId);
+  const window = inferJiraWindow(item);
+  return (
+    <>
+      <div className="timeline-label ops child">
+        <div className="tree-branch ops" />
+        <div className="label-stack">
+          <a className="label-title child" href={`${JIRA_BASE}/${item.jiraKey}`} target="_blank" rel="noreferrer">
+            {item.title}
+          </a>
+          <div className="label-meta">
+            <span>{item.jiraKey}</span>
+            <span>{member?.name || "Unassigned"}</span>
+            <span>{item.status || (item.isDone ? "Done" : "In flight")}</span>
+          </div>
+        </div>
+      </div>
+      <RowGrid dayCount={dayCount}>
+        <TimelineBar
+          title={item.jiraKey}
+          startKey={window.startKey}
+          endKey={window.endKey}
+          horizonStartKey={horizonStartKey}
+          horizonEndKey={horizonEndKey}
+          tone={item.isDone ? "done" : "ops"}
+          subtitle={item.status}
+          compact
+        />
+        <TimelineMarker
+          type={item.isDone ? "done" : "due"}
+          label={item.title}
+          dateKeyValue={item.isDone ? item.resolvedKey || item.dueDateKey : item.dueDateKey}
+          horizonStartKey={horizonStartKey}
+          horizonEndKey={horizonEndKey}
+        />
+      </RowGrid>
+    </>
+  );
+}
+
+function ModalFrame({ title, eyebrow, onClose, children }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <div>
+            <div className="section-eyebrow">{eyebrow}</div>
+            <h3>{title}</h3>
+          </div>
+          <button className="icon-button" onClick={onClose}>
+            x
+          </button>
+        </div>
+        {children}
       </div>
     </div>
   );
@@ -266,45 +574,35 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [loginSubmitting, setLoginSubmitting] = useState(false);
 
-  const [assignments, setAssignments] = useState([]);
-  const [readyToWorkOptions, setReadyToWorkOptions] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [priorities, setPriorities] = useState([]);
+  const [jiraItems, setJiraItems] = useState([]);
+  const [readyItems, setReadyItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isHydrated, setIsHydrated] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [saveStatus, setSaveStatus] = useState(null);
 
-  const [showDone, setShowDone] = useState(false);
   const [horizonDays, setHorizonDays] = useState(DEFAULT_HORIZON);
+  const [showDone, setShowDone] = useState(true);
   const [visibleMemberIds, setVisibleMemberIds] = useState(TEAM_MEMBERS.map((member) => member.id));
-  const [selectedJiraStatuses, setSelectedJiraStatuses] = useState([]);
-  const [jiraOverrides, setJiraOverrides] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(JIRA_OVERRIDE_STORAGE_KEY) || "{}");
-    } catch {
-      return {};
-    }
-  });
-  const [draggingId, setDraggingId] = useState(null);
+  const [priorityFilter, setPriorityFilter] = useState("all");
 
-  const [showTaskModal, setShowTaskModal] = useState(false);
-  const [editingAssignment, setEditingAssignment] = useState(null);
-  const [taskForm, setTaskForm] = useState({
-    title: "",
-    memberId: TEAM_MEMBERS[0].id,
-    startKey: TODAY_KEY,
-    endKey: dateKey(addDays(TODAY, 4)),
-  });
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [projectForm, setProjectForm] = useState(emptyProjectForm());
+  const [editingProjectId, setEditingProjectId] = useState(null);
 
-  const nextId = useRef(300);
+  const [priorityModalOpen, setPriorityModalOpen] = useState(false);
+  const [priorityForm, setPriorityForm] = useState(emptyPriorityForm());
+  const [editingPriorityId, setEditingPriorityId] = useState(null);
+
+  const [milestoneModalOpen, setMilestoneModalOpen] = useState(false);
+  const [milestoneForm, setMilestoneForm] = useState(emptyMilestoneForm());
+  const [editingMilestoneId, setEditingMilestoneId] = useState(null);
+
   const saveTimer = useRef(null);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(JIRA_OVERRIDE_STORAGE_KEY, JSON.stringify(jiraOverrides));
-    } catch {
-      // ignore local storage issues
-    }
-  }, [jiraOverrides]);
+  const nextId = useRef(Date.now());
 
   useEffect(() => {
     let cancelled = false;
@@ -316,8 +614,7 @@ export default function App() {
         if (cancelled) return;
         setAuthConfigured(data.authConfigured);
         setAuthStatus(data.authenticated ? "authenticated" : "unauthenticated");
-      } catch (error) {
-        console.error("Session check failed", error);
+      } catch {
         if (!cancelled) {
           setAuthConfigured(true);
           setAuthStatus("unauthenticated");
@@ -333,29 +630,52 @@ export default function App() {
 
   useEffect(() => {
     if (authStatus !== "authenticated") return;
+
     let cancelled = false;
 
     async function loadData() {
       setLoading(true);
       try {
-        const manualAssignments = await fetchManualAssignments();
-        const [jiraResult, readyOptions] = await Promise.all([fetchJiraAssignments(), fetchReadyToWorkOptions()]);
-        const merged = [...manualAssignments, ...jiraResult.items];
+        const storedProjects = readLocalStorage(PROJECTS_STORAGE_KEY, []);
+        const storedPriorities = readLocalStorage(PRIORITIES_STORAGE_KEY, []);
 
         if (!cancelled) {
-          setAssignments(merged);
-          setReadyToWorkOptions(readyOptions);
-          await persistAssignments(manualAssignments, setSaveStatus);
-          if (jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0) {
-            setSyncStatus({
-              type: "error",
-              message: "Jira connected, but the current search returned 0 issues. This usually means the project, permissions, or workflow filters need adjustment.",
-            });
+          setProjects(normalizeProjects(storedProjects));
+          setPriorities(normalizePriorities(storedPriorities));
+        }
+
+        const alreadyImported = localStorage.getItem(LEGACY_IMPORT_KEY) === "true";
+        if (!alreadyImported && (!storedProjects || storedProjects.length === 0)) {
+          try {
+            const legacyAssignments = await fetchLegacyManualAssignments();
+            if (!cancelled && legacyAssignments.length) {
+              const imported = legacyAssignmentsToProjects(legacyAssignments);
+              setProjects(normalizeProjects(imported));
+              writeLocalStorage(PROJECTS_STORAGE_KEY, imported);
+            }
+          } finally {
+            localStorage.setItem(LEGACY_IMPORT_KEY, "true");
           }
         }
+
+        const [jiraResult, readyResult] = await Promise.all([fetchJiraAssignments(), fetchReadyToWorkOptions()]);
+        if (cancelled) return;
+
+        setJiraItems(jiraResult.items);
+        setReadyItems(readyResult);
+        setSyncStatus({
+          type: jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0 ? "error" : "success",
+          message:
+            jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0
+              ? "Jira is connected, but the current queries returned no issues. Check project scope, assignees, or permissions."
+              : `Synced ${jiraResult.stats.rawActive} active and ${jiraResult.stats.rawDone} recently done Jira issues.`,
+        });
+        setIsHydrated(true);
       } catch (error) {
-        console.error("Initial load failed", error);
-        if (!cancelled) setSyncStatus({ type: "error", message: error.message || "Unable to load team assignments and Jira items." });
+        if (!cancelled) {
+          setSyncStatus({ type: "error", message: error.message || "Unable to load planner data." });
+          setIsHydrated(true);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -367,172 +687,250 @@ export default function App() {
     };
   }, [authStatus]);
 
-  const availableJiraStatuses = useMemo(
-    () => [...new Set(assignments.filter((item) => item.fromJira).map((item) => item.status).filter(Boolean))].sort(),
-    [assignments]
-  );
-
   useEffect(() => {
-    if (!availableJiraStatuses.length) return;
-    setSelectedJiraStatuses((current) => {
-      if (!current.length) return availableJiraStatuses;
-      const next = current.filter((status) => availableJiraStatuses.includes(status));
-      return next.length ? next : availableJiraStatuses;
+    if (authStatus !== "authenticated" || !isHydrated) return;
+    setSaveStatus("saving");
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      const projectsSaved = writeLocalStorage(PROJECTS_STORAGE_KEY, projects);
+      const prioritiesSaved = writeLocalStorage(PRIORITIES_STORAGE_KEY, priorities);
+      setSaveStatus(projectsSaved && prioritiesSaved ? "saved" : "error");
+      window.setTimeout(() => setSaveStatus(null), 1800);
+    }, 250);
+
+    return () => {
+      window.clearTimeout(saveTimer.current);
+    };
+  }, [authStatus, isHydrated, priorities, projects]);
+
+  const dayColumns = useMemo(() => buildDayColumns(horizonDays), [horizonDays]);
+  const monthGroups = useMemo(() => buildMonthGroups(dayColumns), [dayColumns]);
+  const horizonStartKey = dayColumns[0]?.key || TODAY_KEY;
+  const horizonEndKey = dayColumns[dayColumns.length - 1]?.key || TODAY_KEY;
+
+  const visibleProjects = useMemo(() => {
+    return projects
+      .map((project) => ({
+        ...project,
+        deliverables: (project.deliverables || []).filter((item) => {
+          if (!showDone && item.doneKey) return false;
+          if (item.assigneeId && !visibleMemberIds.includes(item.assigneeId)) return false;
+          return overlapsHorizon(project.startKey, project.endKey, horizonStartKey, horizonEndKey) || overlapsHorizon(item.dueKey, item.doneKey || item.dueKey, horizonStartKey, horizonEndKey);
+        }),
+      }))
+      .filter((project) => {
+        const matchesOwner = !project.ownerId || visibleMemberIds.includes(project.ownerId);
+        const matchesTimeline = overlapsHorizon(project.startKey, project.endKey, horizonStartKey, horizonEndKey);
+        return matchesOwner && (matchesTimeline || project.deliverables.length > 0);
+      });
+  }, [projects, showDone, visibleMemberIds, horizonStartKey, horizonEndKey]);
+
+  const opsGroups = useMemo(() => {
+    return TEAM_MEMBERS.filter((member) => visibleMemberIds.includes(member.id))
+      .map((member) => ({
+        member,
+        items: jiraItems
+          .filter((item) => item.memberId === member.id)
+          .filter((item) => (showDone ? true : !item.isDone))
+          .filter((item) => {
+            const window = inferJiraWindow(item);
+            return overlapsHorizon(window.startKey, window.endKey, horizonStartKey, horizonEndKey);
+          }),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [jiraItems, visibleMemberIds, showDone, horizonStartKey, horizonEndKey]);
+
+  const filteredPriorities = useMemo(() => {
+    return priorities.filter((item) => {
+      if (priorityFilter !== "all" && item.priority !== priorityFilter) return false;
+      if (item.ownerId && !visibleMemberIds.includes(Number(item.ownerId))) return false;
+      return true;
     });
-  }, [availableJiraStatuses]);
-
-  const weekColumns = useMemo(() => buildWeekColumns(horizonDays), [horizonDays]);
-  const horizonStartKey = weekColumns[0]?.startKey || TODAY_KEY;
-  const horizonEndKey = weekColumns[weekColumns.length - 1]?.endKey || TODAY_KEY;
-
-  const filteredAssignments = useMemo(() => {
-    return assignments.filter((item) => {
-      if (!visibleMemberIds.includes(item.memberId)) return false;
-      if (!showDone && item.isDone) return false;
-      if (item.fromJira && selectedJiraStatuses.length && !selectedJiraStatuses.includes(item.status || "")) return false;
-
-      const timeline = itemTimeline(item, jiraOverrides);
-      return timeline.startKey <= horizonEndKey && timeline.endKey >= horizonStartKey;
-    });
-  }, [assignments, horizonEndKey, horizonStartKey, jiraOverrides, selectedJiraStatuses, showDone, visibleMemberIds]);
+  }, [priorities, priorityFilter, visibleMemberIds]);
 
   const stats = useMemo(() => {
-    const visible = filteredAssignments.filter((item) => !item.isDone);
+    const allDeliverables = projects.flatMap((project) => project.deliverables || []);
+    const overdueOps = jiraItems.filter((item) => !item.isDone && item.dueDateKey && item.dueDateKey < TODAY_KEY).length;
     return {
-      planned: visible.filter((item) => !item.fromJira).length,
-      ops: visible.filter((item) => item.fromJira).length,
-      people: visibleMemberIds.length,
-      overdue: visible.filter((item) => item.fromJira && item.dueDateKey && item.dueDateKey < TODAY_KEY).length,
+      projects: projects.length,
+      milestones: allDeliverables.length,
+      ops: jiraItems.filter((item) => !item.isDone).length,
+      priorities: priorities.length,
+      overdueOps,
     };
-  }, [filteredAssignments, visibleMemberIds.length]);
+  }, [jiraItems, priorities.length, projects]);
 
-  const teamRows = useMemo(() => {
-    return TEAM_MEMBERS.filter((member) => visibleMemberIds.includes(member.id)).map((member) => ({
-      member,
-      items: filteredAssignments
-        .filter((item) => item.memberId === member.id)
-        .sort((a, b) => {
-          const aStart = itemTimeline(a, jiraOverrides).startKey;
-          const bStart = itemTimeline(b, jiraOverrides).startKey;
-          return aStart.localeCompare(bStart);
-        }),
-    }));
-  }, [filteredAssignments, jiraOverrides, visibleMemberIds]);
+  function newId(prefix) {
+    nextId.current += 1;
+    return `${prefix}-${nextId.current}`;
+  }
 
-  const opsBacklog = useMemo(() => {
-    return assignments
-      .filter((item) => item.fromJira && !item.isDone)
-      .filter((item) => !selectedJiraStatuses.length || selectedJiraStatuses.includes(item.status || ""))
-      .sort((a, b) => {
-        const aKey = itemTimeline(a, jiraOverrides).startKey;
-        const bKey = itemTimeline(b, jiraOverrides).startKey;
-        return aKey.localeCompare(bKey);
+  function openProjectModal(project = null) {
+    if (project) {
+      setEditingProjectId(project.id);
+      setProjectForm({
+        title: project.title,
+        ownerId: project.ownerId || TEAM_MEMBERS[0].id,
+        startKey: project.startKey,
+        endKey: project.endKey,
+        status: project.status || "In progress",
+        summary: project.summary || "",
       });
-  }, [assignments, jiraOverrides, selectedJiraStatuses]);
-
-  function scheduleManualPersist(nextAssignments) {
-    const manualOnly = nextAssignments.filter((item) => !item.fromJira);
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => persistAssignments(manualOnly, setSaveStatus), 400);
-  }
-
-  function updateAssignments(updater) {
-    setAssignments((current) => {
-      const next = typeof updater === "function" ? updater(current) : updater;
-      scheduleManualPersist(next);
-      return next;
-    });
-  }
-
-  function openNewTask(memberId = TEAM_MEMBERS[0].id) {
-    setEditingAssignment(null);
-    setTaskForm({
-      title: "",
-      memberId,
-      startKey: TODAY_KEY,
-      endKey: dateKey(addDays(TODAY, 4)),
-    });
-    setShowTaskModal(true);
-  }
-
-  function openTask(item) {
-    const timeline = itemTimeline(item, jiraOverrides);
-    setEditingAssignment(item);
-    setTaskForm({
-      title: item.title,
-      memberId: item.memberId,
-      startKey: timeline.startKey,
-      endKey: timeline.endKey,
-    });
-    setShowTaskModal(true);
-  }
-
-  function saveTask() {
-    if (!taskForm.title.trim() || taskForm.endKey < taskForm.startKey) return;
-
-    if (editingAssignment) {
-      if (editingAssignment.fromJira) {
-        setJiraOverrides((current) => ({
-          ...current,
-          [editingAssignment.id]: {
-            startKey: taskForm.startKey,
-            endKey: taskForm.endKey,
-          },
-        }));
-        updateAssignments((current) =>
-          current.map((item) =>
-            item.id === editingAssignment.id ? { ...item, title: taskForm.title.trim(), memberId: Number(taskForm.memberId) } : item
-          )
-        );
-      } else {
-        updateAssignments((current) =>
-          current.map((item) =>
-            item.id === editingAssignment.id
-              ? {
-                  ...item,
-                  title: taskForm.title.trim(),
-                  memberId: Number(taskForm.memberId),
-                  startKey: taskForm.startKey,
-                  endKey: taskForm.endKey,
-                }
-              : item
-          )
-        );
-      }
     } else {
-      updateAssignments((current) => [
-        ...current,
+      setEditingProjectId(null);
+      setProjectForm(emptyProjectForm());
+    }
+    setProjectModalOpen(true);
+  }
+
+  function saveProject() {
+    if (!projectForm.title.trim()) return;
+    const range = clampDateRange(projectForm.startKey, projectForm.endKey);
+    if (editingProjectId) {
+      setProjects((current) =>
+        current.map((project) =>
+          project.id === editingProjectId
+            ? {
+                ...project,
+                title: projectForm.title.trim(),
+                ownerId: Number(projectForm.ownerId),
+                startKey: range.startKey,
+                endKey: range.endKey,
+                status: projectForm.status.trim() || "In progress",
+                summary: projectForm.summary.trim(),
+              }
+            : project
+        )
+      );
+    } else {
+      setProjects((current) => [
         {
-          id: `manual-${nextId.current++}-${Date.now()}`,
-          title: taskForm.title.trim(),
-          memberId: Number(taskForm.memberId),
-          startKey: taskForm.startKey,
-          endKey: taskForm.endKey,
-          fromJira: false,
-          jiraKey: null,
-          status: "Planned",
-          dueDateKey: null,
-          resolvedKey: null,
-          isDone: false,
+          id: newId("project"),
+          title: projectForm.title.trim(),
+          ownerId: Number(projectForm.ownerId),
+          startKey: range.startKey,
+          endKey: range.endKey,
+          status: projectForm.status.trim() || "In progress",
+          summary: projectForm.summary.trim(),
+          expanded: true,
+          deliverables: [],
         },
+        ...current,
       ]);
     }
-
-    setShowTaskModal(false);
+    setProjectModalOpen(false);
   }
 
-  function deleteTask(item) {
-    if (item.fromJira) {
-      setJiraOverrides((current) => {
-        const next = { ...current };
-        delete next[item.id];
-        return next;
+  function deleteProject() {
+    if (!editingProjectId) return;
+    setProjects((current) => current.filter((project) => project.id !== editingProjectId));
+    setProjectModalOpen(false);
+  }
+
+  function openPriorityModal(item = null) {
+    if (item) {
+      setEditingPriorityId(item.id);
+      setPriorityForm({
+        title: item.title,
+        priority: item.priority || "medium",
+        ownerId: item.ownerId || "",
+        targetKey: item.targetKey || "",
+        summary: item.summary || "",
       });
-      updateAssignments((current) => current.filter((entry) => entry.id !== item.id));
     } else {
-      updateAssignments((current) => current.filter((entry) => entry.id !== item.id));
+      setEditingPriorityId(null);
+      setPriorityForm(emptyPriorityForm());
     }
-    setShowTaskModal(false);
+    setPriorityModalOpen(true);
+  }
+
+  function savePriority() {
+    if (!priorityForm.title.trim()) return;
+    const payload = {
+      title: priorityForm.title.trim(),
+      priority: priorityForm.priority,
+      ownerId: priorityForm.ownerId ? Number(priorityForm.ownerId) : null,
+      targetKey: priorityForm.targetKey || "",
+      summary: priorityForm.summary.trim(),
+    };
+
+    if (editingPriorityId) {
+      setPriorities((current) => current.map((item) => (item.id === editingPriorityId ? { ...item, ...payload } : item)));
+    } else {
+      setPriorities((current) => [{ id: newId("priority"), ...payload }, ...current]);
+    }
+
+    setPriorityModalOpen(false);
+  }
+
+  function deletePriority() {
+    if (!editingPriorityId) return;
+    setPriorities((current) => current.filter((item) => item.id !== editingPriorityId));
+    setPriorityModalOpen(false);
+  }
+
+  function openMilestoneModal(projectId, item = null) {
+    if (item) {
+      setEditingMilestoneId(item.id);
+      setMilestoneForm({
+        projectId,
+        title: item.title,
+        assigneeId: item.assigneeId || "",
+        dueKey: item.dueKey || TODAY_KEY,
+        doneKey: item.doneKey || "",
+        status: item.status || "Due",
+      });
+    } else {
+      setEditingMilestoneId(null);
+      setMilestoneForm(emptyMilestoneForm(projectId));
+    }
+    setMilestoneModalOpen(true);
+  }
+
+  function saveMilestone() {
+    if (!milestoneForm.projectId || !milestoneForm.title.trim()) return;
+    const payload = {
+      id: editingMilestoneId || newId("milestone"),
+      title: milestoneForm.title.trim(),
+      assigneeId: milestoneForm.assigneeId ? Number(milestoneForm.assigneeId) : null,
+      dueKey: milestoneForm.dueKey || TODAY_KEY,
+      doneKey: milestoneForm.doneKey || "",
+      status: milestoneForm.doneKey ? "Done" : milestoneForm.status || "Due",
+    };
+
+    setProjects((current) =>
+      current.map((project) => {
+        if (project.id !== milestoneForm.projectId) return project;
+        const deliverables = [...(project.deliverables || [])];
+        const existingIndex = deliverables.findIndex((item) => item.id === payload.id);
+        if (existingIndex >= 0) {
+          deliverables[existingIndex] = payload;
+        } else {
+          deliverables.push(payload);
+        }
+        return { ...project, deliverables };
+      })
+    );
+
+    setMilestoneModalOpen(false);
+  }
+
+  function deleteMilestone() {
+    if (!editingMilestoneId || !milestoneForm.projectId) return;
+    setProjects((current) =>
+      current.map((project) =>
+        project.id === milestoneForm.projectId
+          ? { ...project, deliverables: (project.deliverables || []).filter((item) => item.id !== editingMilestoneId) }
+          : project
+      )
+    );
+    setMilestoneModalOpen(false);
+  }
+
+  function toggleExpanded(projectId) {
+    setProjects((current) =>
+      current.map((project) => (project.id === projectId ? { ...project, expanded: !project.expanded } : project))
+    );
   }
 
   function toggleMember(memberId) {
@@ -542,72 +940,22 @@ export default function App() {
     });
   }
 
-  function handleDragStart(event, item) {
-    setDraggingId(item.id);
-    event.dataTransfer.setData("text/plain", item.id);
-    event.dataTransfer.effectAllowed = "move";
-  }
-
-  function handleDragEnd() {
-    setDraggingId(null);
-  }
-
-  function handleDropItem(memberId, weekStartKey) {
-    if (!draggingId) return;
-
-    const item = assignments.find((entry) => entry.id === draggingId);
-    if (!item) {
-      setDraggingId(null);
-      return;
-    }
-
-    const timeline = itemTimeline(item, jiraOverrides);
-    const duration = diffDaysInclusive(timeline.startKey, timeline.endKey);
-    const nextEndKey = dateKey(addDays(parseDate(weekStartKey), duration - 1));
-
-    if (item.fromJira) {
-      setJiraOverrides((current) => ({
-        ...current,
-        [item.id]: { startKey: weekStartKey, endKey: nextEndKey },
-      }));
-      setAssignments((current) => current.map((entry) => (entry.id === item.id ? { ...entry, memberId } : entry)));
-    } else {
-      updateAssignments((current) =>
-        current.map((entry) =>
-          entry.id === item.id
-            ? {
-                ...entry,
-                memberId,
-                startKey: weekStartKey,
-                endKey: nextEndKey,
-              }
-            : entry
-        )
-      );
-    }
-
-    setDraggingId(null);
-  }
-
   async function syncFromJira() {
     setSyncing(true);
     setSyncStatus(null);
     try {
-      const manualAssignments = assignments.filter((item) => !item.fromJira);
-      const [jiraResult, readyOptions] = await Promise.all([fetchJiraAssignments(), fetchReadyToWorkOptions()]);
-      setAssignments([...manualAssignments, ...jiraResult.items]);
-      setReadyToWorkOptions(readyOptions);
-      scheduleManualPersist(manualAssignments);
+      const [jiraResult, readyResult] = await Promise.all([fetchJiraAssignments(), fetchReadyToWorkOptions()]);
+      setJiraItems(jiraResult.items);
+      setReadyItems(readyResult);
       setSyncStatus({
-        type: "success",
+        type: jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0 ? "error" : "success",
         message:
           jiraResult.stats.rawActive === 0 && jiraResult.stats.rawDone === 0
-            ? "Jira connected, but the search returned 0 issues. Check project scope, assignees, or Jira permissions."
-            : `Fetched ${jiraResult.stats.rawActive} active and ${jiraResult.stats.rawDone} done Jira issues. Mapped ${jiraResult.stats.mappedActive} active items to your team and preserved manual project blocks.`,
+            ? "Jira connected, but no issues matched the current query."
+            : `Fetched ${jiraResult.stats.rawActive} active and ${jiraResult.stats.rawDone} recently completed Jira issues.`,
       });
     } catch (error) {
-      console.error("Jira sync failed", error);
-      setSyncStatus({ type: "error", message: error.message || "Sync failed. Check Jira environment variables and token." });
+      setSyncStatus({ type: "error", message: error.message || "Jira sync failed." });
     } finally {
       setSyncing(false);
     }
@@ -639,8 +987,10 @@ export default function App() {
 
   async function handleLogout() {
     await fetch("/api/logout", { method: "POST" });
-    setAssignments([]);
     setAuthStatus("unauthenticated");
+    setIsHydrated(false);
+    setJiraItems([]);
+    setReadyItems([]);
   }
 
   if (authStatus === "checking") {
@@ -656,41 +1006,14 @@ export default function App() {
 
   if (authStatus !== "authenticated") {
     return (
-      <div className="pm-app auth-app">
-        <section className="auth-card">
-          <div className="pm-badge">Secure access</div>
-          <h1>Sign in to Team Planner</h1>
-          <p>Use the application credentials to open the executive calendar, drag/drop assignments, and review Jira operational load.</p>
-          {!authConfigured ? (
-            <div className="auth-warning">
-              `APP_LOGIN_USER` and `APP_LOGIN_PASSWORD` are not configured yet, so the app cannot validate a login.
-            </div>
-          ) : null}
-          <form className="auth-form" onSubmit={handleLogin}>
-            <label>
-              <span>Username</span>
-              <input
-                value={loginForm.username}
-                onChange={(event) => setLoginForm((current) => ({ ...current, username: event.target.value }))}
-                autoComplete="username"
-              />
-            </label>
-            <label>
-              <span>Password</span>
-              <input
-                type="password"
-                value={loginForm.password}
-                onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-                autoComplete="current-password"
-              />
-            </label>
-            {loginError ? <div className="auth-error">{loginError}</div> : null}
-            <button className="primary-button" type="submit" disabled={loginSubmitting || !authConfigured}>
-              {loginSubmitting ? "Signing in..." : "Sign in"}
-            </button>
-          </form>
-        </section>
-      </div>
+      <AuthScreen
+        authConfigured={authConfigured}
+        loginForm={loginForm}
+        setLoginForm={setLoginForm}
+        loginError={loginError}
+        loginSubmitting={loginSubmitting}
+        onLogin={handleLogin}
+      />
     );
   }
 
@@ -698,10 +1021,10 @@ export default function App() {
     <div className="pm-app">
       <header className="pm-topbar">
         <div className="pm-brand">
-          <span className="pm-badge">Executive team calendar</span>
-          <h1>Weekly delivery calendar for your team</h1>
+          <span className="pm-badge">Executive portfolio view</span>
+          <h1>Project hierarchy, Jira operations, and next priorities in one calendar.</h1>
           <p>
-            Block off people by week, drag assignments across the next 30, 60, or 90 days, and blend planned project work with Jira operational demand.
+            Manual top-level projects anchor the roadmap, Jira-synced operational work shows delivery pressure, and priority items stay visible even when they are not staffed or fully dated yet.
           </p>
         </div>
         <div className="pm-actions">
@@ -712,8 +1035,11 @@ export default function App() {
           <button className="ghost-button" onClick={() => setShowDone((current) => !current)}>
             {showDone ? "Hide completed" : "Show completed"}
           </button>
-          <button className="primary-button" onClick={() => openNewTask()}>
-            Add assignment
+          <button className="ghost-button" onClick={() => openPriorityModal()}>
+            Add priority
+          </button>
+          <button className="primary-button" onClick={() => openProjectModal()}>
+            Add project
           </button>
           <button className="sync-button" onClick={syncFromJira} disabled={syncing}>
             {syncing ? "Syncing Jira..." : "Sync Jira"}
@@ -724,15 +1050,15 @@ export default function App() {
       {syncStatus ? <div className={`pm-banner ${syncStatus.type}`}>{syncStatus.message}</div> : null}
 
       <section className="pm-stats">
-        <StatCard label="Visible team members" value={stats.people} detail="People included in the current executive view" />
-        <StatCard label="Planned assignments" value={stats.planned} detail="Project blocks scheduled inside the selected horizon" />
-        <StatCard label="Jira operational items" value={stats.ops} detail="Operational demand currently visible from Jira" />
-        <StatCard label="Overdue operational items" value={stats.overdue} detail="Active Jira work that is already past due" />
+        <StatCard label="Top-level projects" value={stats.projects} detail="Manual roadmap items tracked in the executive view" />
+        <StatCard label="Project due and done items" value={stats.milestones} detail="Nested deliverables and milestones under project rows" />
+        <StatCard label="Active Jira operations" value={stats.ops} detail="Operational delivery work synced from Jira" />
+        <StatCard label="Overdue Jira items" value={stats.overdueOps} detail="Operational work already beyond its due date" />
       </section>
 
       <section className="control-panel">
         <div className="control-group">
-          <span className="control-label">Planning window</span>
+          <span className="control-label">Timeline horizon</span>
           <div className="chip-row">
             {HORIZON_OPTIONS.map((option) => (
               <FilterChip key={option} active={horizonDays === option} label={`${option} days`} onClick={() => setHorizonDays(option)} />
@@ -745,7 +1071,7 @@ export default function App() {
           <div className="chip-row">
             <FilterChip
               active={visibleMemberIds.length === TEAM_MEMBERS.length}
-              label="All team members"
+              label="Entire team"
               onClick={() => setVisibleMemberIds(TEAM_MEMBERS.map((member) => member.id))}
             />
             {TEAM_MEMBERS.map((member) => (
@@ -760,230 +1086,398 @@ export default function App() {
             ))}
           </div>
         </div>
-
-        <div className="control-group">
-          <span className="control-label">Jira status filter</span>
-          <div className="chip-row">
-            <FilterChip active={selectedJiraStatuses.length === availableJiraStatuses.length} label="All statuses" onClick={() => setSelectedJiraStatuses(availableJiraStatuses)} />
-            {availableJiraStatuses.map((status) => (
-              <FilterChip
-                key={status}
-                active={selectedJiraStatuses.includes(status)}
-                label={status}
-                onClick={() =>
-                  setSelectedJiraStatuses((current) =>
-                    current.includes(status) ? current.filter((entry) => entry !== status) : [...current, status]
-                  )
-                }
-              />
-            ))}
-          </div>
-        </div>
       </section>
 
-      <section className="calendar-panel">
-          <div className="calendar-panel-head">
-          <div>
-            <div className="section-eyebrow">Resource calendar</div>
-            <h2>Weekly capacity map</h2>
-            <p>Drag any block onto another team member or week to reschedule it. Jira items keep syncing, and their calendar placement stays locally mapped for planning.</p>
-          </div>
-          <WorkloadLegend />
-        </div>
-
-        <div className="calendar-shell">
-          <div className="calendar-header-spacer" />
-          <div className="calendar-header" style={{ "--week-count": weekColumns.length }}>
-            {weekColumns.map((week) => (
-              <div key={week.index} className="calendar-week-header">
-                <span>{week.label}</span>
-                <strong>{week.shortLabel}</strong>
-              </div>
-            ))}
+      <section className="dashboard-grid">
+        <div className="portfolio-panel">
+          <div className="panel-head">
+            <div>
+              <div className="section-eyebrow">Roadmap timeline</div>
+              <h2>Strategic projects and operational flow</h2>
+              <p>Scroll horizontally through the calendar to compare parent project windows, nested due/done markers, and Jira operational load by team member.</p>
+            </div>
+            <div className="inline-note">Manual portfolio data is saved locally in this browser. Jira work continues to sync from the existing API.</div>
           </div>
 
           {loading ? (
             <section className="loading-panel inset">
               <div className="spinner" />
-              <p>Loading delivery data and Jira work...</p>
+              <p>Loading portfolio and Jira data...</p>
             </section>
           ) : (
-            teamRows.map(({ member, items }) => (
-              <TeamCalendarRow
-                key={member.id}
-                member={member}
-                weeks={weekColumns}
-                items={items}
-                jiraOverrides={jiraOverrides}
-                dragging={Boolean(draggingId)}
-                onDropItem={handleDropItem}
-                onEditItem={openTask}
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-              />
-            ))
-          )}
-        </div>
-      </section>
-
-      <section className="ops-panel">
-        <div className="section-headline">
-          <div>
-            <div className="section-eyebrow">WOPS board</div>
-            <h2>Ready to Work items with due dates</h2>
-          </div>
-        </div>
-        <div className="ops-grid">
-          {readyToWorkOptions.length ? (
-            readyToWorkOptions.map((item) => (
-              <div key={item.id} className="ops-ticket ready-ticket">
-                <div className="ops-ticket-head">
-                  <span>{item.jiraKey}</span>
-                  <span>{item.assigneeName || "Unassigned"}</span>
+            <div className="timeline-shell">
+              <div className="timeline-left">
+                <div className="timeline-left-head">
+                  <span>Hierarchy</span>
+                  <strong>Projects and work items</strong>
                 </div>
-                <strong>{item.title}</strong>
-                <p>{item.dueDateKey ? `Due ${fmtDate(item.dueDateKey, { month: "long", day: "numeric", year: "numeric" })}` : "No due date"}</p>
-                <div className="ops-ticket-meta">
-                  <span>{item.status}</span>
-                  <a href={`${JIRA_BASE}/${item.jiraKey}`} target="_blank" rel="noreferrer">
-                    Open in Jira
-                  </a>
+                <div className="timeline-scroll-body">
+                  <div className="section-divider">Strategic projects</div>
+                  {visibleProjects.length ? (
+                    visibleProjects.map((project) => (
+                      <div key={project.id} className="timeline-row-pair">
+                        <ProjectRow
+                          project={project}
+                          horizonStartKey={horizonStartKey}
+                          horizonEndKey={horizonEndKey}
+                          dayCount={dayColumns.length}
+                          onEditProject={openProjectModal}
+                          onAddMilestone={openMilestoneModal}
+                          onToggleExpanded={toggleExpanded}
+                        />
+                        {project.expanded
+                          ? (project.deliverables || []).map((item) => (
+                              <DeliverableRow
+                                key={item.id}
+                                item={item}
+                                project={project}
+                                horizonStartKey={horizonStartKey}
+                                horizonEndKey={horizonEndKey}
+                                dayCount={dayColumns.length}
+                                onEditMilestone={openMilestoneModal}
+                              />
+                            ))
+                          : null}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="empty-block">
+                      <p>No projects match the current filters.</p>
+                      <button className="primary-button" onClick={() => openProjectModal()}>
+                        Add the first project
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="section-divider">Operational work from Jira</div>
+                  {opsGroups.length ? (
+                    opsGroups.map((group) => (
+                      <div key={group.member.id} className="timeline-row-pair">
+                        <OpsMemberRow
+                          member={group.member}
+                          items={group.items}
+                          horizonStartKey={horizonStartKey}
+                          horizonEndKey={horizonEndKey}
+                          dayCount={dayColumns.length}
+                        />
+                        {group.items.map((item) => (
+                          <OpsItemRow
+                            key={item.id}
+                            item={item}
+                            horizonStartKey={horizonStartKey}
+                            horizonEndKey={horizonEndKey}
+                            dayCount={dayColumns.length}
+                          />
+                        ))}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="empty-block compact">
+                      <p>No Jira items match the current horizon and team filters.</p>
+                    </div>
+                  )}
                 </div>
               </div>
-            ))
-          ) : (
-            <p className="empty-copy">No due Jira items are currently in Ready to Work on the WOPS board.</p>
-          )}
-        </div>
-      </section>
 
-      <section className="ops-panel">
-        <div className="section-headline">
-          <div>
-            <div className="section-eyebrow">Operational detail</div>
-            <h2>Jira work feeding the calendar</h2>
-          </div>
-        </div>
-        <div className="ops-grid">
-          {opsBacklog.length ? (
-            opsBacklog.map((item) => {
-              const owner = findMember(item.memberId);
-              const timeline = itemTimeline(item, jiraOverrides);
-              return (
-                <div key={item.id} className="ops-ticket" style={{ "--card-accent": owner?.color || "#475569" }}>
-                  <div className="ops-ticket-head">
-                    <span>{item.jiraKey}</span>
-                    <span>{owner?.name || "Unassigned"}</span>
-                  </div>
-                  <button className="ops-ticket-title" onClick={() => openTask(item)}>
-                    <strong>{item.title}</strong>
-                  </button>
-                  <p>{item.status || "Operational"}</p>
-                  <div className="ops-ticket-meta">
-                    <span>{fmtRange(timeline.startKey, timeline.endKey)}</span>
-                    {item.jiraKey ? (
-                      <a
-                        href={`${JIRA_BASE}/${item.jiraKey}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        Open in Jira
-                      </a>
-                    ) : null}
-                  </div>
+              <div className="timeline-right">
+                <TimelineScale dayColumns={dayColumns} monthGroups={monthGroups} />
+                <div className="timeline-scroll-body">
+                  <div className="section-divider spacer" />
+                  {visibleProjects.length ? (
+                    visibleProjects.map((project) => (
+                      <div key={project.id} className="timeline-row-pair">
+                        <ProjectRow
+                          project={project}
+                          horizonStartKey={horizonStartKey}
+                          horizonEndKey={horizonEndKey}
+                          dayCount={dayColumns.length}
+                          onEditProject={openProjectModal}
+                          onAddMilestone={openMilestoneModal}
+                          onToggleExpanded={toggleExpanded}
+                        />
+                        {project.expanded
+                          ? (project.deliverables || []).map((item) => (
+                              <DeliverableRow
+                                key={item.id}
+                                item={item}
+                                project={project}
+                                horizonStartKey={horizonStartKey}
+                                horizonEndKey={horizonEndKey}
+                                dayCount={dayColumns.length}
+                                onEditMilestone={openMilestoneModal}
+                              />
+                            ))
+                          : null}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="empty-grid-gap" />
+                  )}
+
+                  <div className="section-divider spacer" />
+                  {opsGroups.length ? (
+                    opsGroups.map((group) => (
+                      <div key={group.member.id} className="timeline-row-pair">
+                        <OpsMemberRow
+                          member={group.member}
+                          items={group.items}
+                          horizonStartKey={horizonStartKey}
+                          horizonEndKey={horizonEndKey}
+                          dayCount={dayColumns.length}
+                        />
+                        {group.items.map((item) => (
+                          <OpsItemRow
+                            key={item.id}
+                            item={item}
+                            horizonStartKey={horizonStartKey}
+                            horizonEndKey={horizonEndKey}
+                            dayCount={dayColumns.length}
+                          />
+                        ))}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="empty-grid-gap" />
+                  )}
                 </div>
-              );
-            })
-          ) : (
-            <p className="empty-copy">No Jira operational items match the current filters.</p>
-          )}
-        </div>
-      </section>
-
-      {showTaskModal ? (
-        <div className="modal-backdrop" onClick={() => setShowTaskModal(false)}>
-          <div className="modal-card" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-head">
-              <div>
-                <div className="section-eyebrow">{editingAssignment?.fromJira ? "Jira assignment" : "Planned assignment"}</div>
-                <h3>{editingAssignment ? "Edit assignment" : "New assignment"}</h3>
               </div>
-              <button className="icon-button" onClick={() => setShowTaskModal(false)}>
-                x
-              </button>
             </div>
+          )}
+        </div>
 
+        <aside className="sidebar-panel">
+          <div className="panel-head compact">
+            <div>
+              <div className="section-eyebrow">Next priorities</div>
+              <h2>What leadership should watch next</h2>
+            </div>
+            <button className="primary-button" onClick={() => openPriorityModal()}>
+              Add priority
+            </button>
+          </div>
+
+          <div className="chip-row">
+            <FilterChip active={priorityFilter === "all"} label="All" onClick={() => setPriorityFilter("all")} />
+            <FilterChip active={priorityFilter === "high"} label="High (^)" onClick={() => setPriorityFilter("high")} />
+            <FilterChip active={priorityFilter === "medium"} label="Medium (-)" onClick={() => setPriorityFilter("medium")} />
+            <FilterChip active={priorityFilter === "low"} label="Low (v)" onClick={() => setPriorityFilter("low")} />
+          </div>
+
+          <div className="priority-list">
+            {filteredPriorities.length ? (
+              filteredPriorities.map((item) => {
+                const owner = findMember(item.ownerId);
+                return (
+                  <button key={item.id} className="priority-card" onClick={() => openPriorityModal(item)}>
+                    <div className="priority-card-head">
+                      <PriorityBadge priority={item.priority} />
+                      <span>{item.priority}</span>
+                    </div>
+                    <strong>{item.title}</strong>
+                    <p>{item.summary || "No additional note yet."}</p>
+                    <div className="priority-card-meta">
+                      <span>{owner?.name || "Owner TBD"}</span>
+                      <span>{item.targetKey ? `Target ${formatDate(item.targetKey)}` : "Date TBD"}</span>
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="empty-block">
+                <p>No priority items match the current filter.</p>
+              </div>
+            )}
+          </div>
+
+          <div className="panel-head compact top-gap">
+            <div>
+              <div className="section-eyebrow">Ready queue</div>
+              <h2>Jira items already due-backed</h2>
+            </div>
+          </div>
+
+          <div className="ready-list">
+            {readyItems.length ? (
+              readyItems.map((item) => (
+                <a key={item.id} className="ready-card" href={`${JIRA_BASE}/${item.jiraKey}`} target="_blank" rel="noreferrer">
+                  <div className="ready-card-head">
+                    <span>{item.jiraKey}</span>
+                    <span>{item.assigneeName || "Unassigned"}</span>
+                  </div>
+                  <strong>{item.title}</strong>
+                  <p>{item.status}</p>
+                  <div className="priority-card-meta">
+                    <span>{item.dueDateKey ? `Due ${formatDate(item.dueDateKey, { month: "short", day: "numeric", year: "numeric" })}` : "No due date"}</span>
+                  </div>
+                </a>
+              ))
+            ) : (
+              <div className="empty-block compact">
+                <p>No “Ready to Work” Jira items with due dates are currently available.</p>
+              </div>
+            )}
+          </div>
+        </aside>
+      </section>
+
+      {projectModalOpen ? (
+        <ModalFrame title={editingProjectId ? "Edit project" : "Add project"} eyebrow="Project" onClose={() => setProjectModalOpen(false)}>
+          <label>
+            <span>Project name</span>
+            <input value={projectForm.title} onChange={(event) => setProjectForm((current) => ({ ...current, title: event.target.value }))} />
+          </label>
+          <label>
+            <span>Project owner</span>
+            <select value={projectForm.ownerId} onChange={(event) => setProjectForm((current) => ({ ...current, ownerId: Number(event.target.value) }))}>
+              {TEAM_MEMBERS.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="modal-grid">
             <label>
-              <span>Title</span>
-              <input value={taskForm.title} onChange={(event) => setTaskForm((current) => ({ ...current, title: event.target.value }))} />
+              <span>Start date</span>
+              <input type="date" value={projectForm.startKey} onChange={(event) => setProjectForm((current) => ({ ...current, startKey: event.target.value }))} />
             </label>
-
             <label>
-              <span>Team member</span>
-              <select value={taskForm.memberId} onChange={(event) => setTaskForm((current) => ({ ...current, memberId: Number(event.target.value) }))}>
+              <span>End date</span>
+              <input type="date" value={projectForm.endKey} onChange={(event) => setProjectForm((current) => ({ ...current, endKey: event.target.value }))} />
+            </label>
+          </div>
+          <label>
+            <span>Status</span>
+            <input value={projectForm.status} onChange={(event) => setProjectForm((current) => ({ ...current, status: event.target.value }))} />
+          </label>
+          <label>
+            <span>Executive summary</span>
+            <textarea value={projectForm.summary} onChange={(event) => setProjectForm((current) => ({ ...current, summary: event.target.value }))} rows={4} />
+          </label>
+          <div className="modal-actions">
+            {editingProjectId ? (
+              <button className="danger-button" onClick={deleteProject}>
+                Delete project
+              </button>
+            ) : null}
+            <button className="primary-button" onClick={saveProject}>
+              {editingProjectId ? "Save changes" : "Create project"}
+            </button>
+          </div>
+        </ModalFrame>
+      ) : null}
+
+      {priorityModalOpen ? (
+        <ModalFrame title={editingPriorityId ? "Edit priority" : "Add priority"} eyebrow="Next priority" onClose={() => setPriorityModalOpen(false)}>
+          <label>
+            <span>Priority title</span>
+            <input value={priorityForm.title} onChange={(event) => setPriorityForm((current) => ({ ...current, title: event.target.value }))} />
+          </label>
+          <label>
+            <span>Priority level</span>
+            <select value={priorityForm.priority} onChange={(event) => setPriorityForm((current) => ({ ...current, priority: event.target.value }))}>
+              <option value="high">High (^)</option>
+              <option value="medium">Medium (-)</option>
+              <option value="low">Low (v)</option>
+            </select>
+          </label>
+          <div className="modal-grid">
+            <label>
+              <span>Owner</span>
+              <select value={priorityForm.ownerId} onChange={(event) => setPriorityForm((current) => ({ ...current, ownerId: event.target.value }))}>
+                <option value="">TBD</option>
                 {TEAM_MEMBERS.map((member) => (
                   <option key={member.id} value={member.id}>
-                    {member.name} - {member.role}
+                    {member.name}
                   </option>
                 ))}
               </select>
             </label>
-
-            <div className="modal-grid">
-              <label>
-                <span>Start date</span>
-                <input type="date" value={taskForm.startKey} onChange={(event) => setTaskForm((current) => ({ ...current, startKey: event.target.value }))} />
-              </label>
-              <label>
-                <span>End date</span>
-                <input type="date" value={taskForm.endKey} min={taskForm.startKey} onChange={(event) => setTaskForm((current) => ({ ...current, endKey: event.target.value }))} />
-              </label>
-            </div>
-
-            {editingAssignment?.jiraKey ? (
-              <a className="link-button" href={`${JIRA_BASE}/${editingAssignment.jiraKey}`} target="_blank" rel="noreferrer">
-                Open {editingAssignment.jiraKey} in Jira
-              </a>
-            ) : null}
-
-            <div className="modal-actions">
-              {editingAssignment ? (
-                <button className="danger-button" onClick={() => deleteTask(editingAssignment)}>
-                  {editingAssignment.fromJira ? "Remove from local plan" : "Delete"}
-                </button>
-              ) : null}
-              <button className="primary-button" onClick={saveTask}>
-                {editingAssignment ? "Save changes" : "Add assignment"}
-              </button>
-            </div>
+            <label>
+              <span>Target date</span>
+              <input type="date" value={priorityForm.targetKey} onChange={(event) => setPriorityForm((current) => ({ ...current, targetKey: event.target.value }))} />
+            </label>
           </div>
-        </div>
+          <label>
+            <span>Context note</span>
+            <textarea value={priorityForm.summary} onChange={(event) => setPriorityForm((current) => ({ ...current, summary: event.target.value }))} rows={4} />
+          </label>
+          <div className="modal-actions">
+            {editingPriorityId ? (
+              <button className="danger-button" onClick={deletePriority}>
+                Delete priority
+              </button>
+            ) : null}
+            <button className="primary-button" onClick={savePriority}>
+              {editingPriorityId ? "Save changes" : "Add priority"}
+            </button>
+          </div>
+        </ModalFrame>
+      ) : null}
+
+      {milestoneModalOpen ? (
+        <ModalFrame title={editingMilestoneId ? "Edit project item" : "Add project item"} eyebrow="Due or done item" onClose={() => setMilestoneModalOpen(false)}>
+          <label>
+            <span>Item title</span>
+            <input value={milestoneForm.title} onChange={(event) => setMilestoneForm((current) => ({ ...current, title: event.target.value }))} />
+          </label>
+          <label>
+            <span>Assignee</span>
+            <select value={milestoneForm.assigneeId} onChange={(event) => setMilestoneForm((current) => ({ ...current, assigneeId: event.target.value }))}>
+              <option value="">Unassigned</option>
+              {TEAM_MEMBERS.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="modal-grid">
+            <label>
+              <span>Due date</span>
+              <input type="date" value={milestoneForm.dueKey} onChange={(event) => setMilestoneForm((current) => ({ ...current, dueKey: event.target.value }))} />
+            </label>
+            <label>
+              <span>Done date</span>
+              <input type="date" value={milestoneForm.doneKey} onChange={(event) => setMilestoneForm((current) => ({ ...current, doneKey: event.target.value }))} />
+            </label>
+          </div>
+          <div className="modal-actions">
+            {editingMilestoneId ? (
+              <button className="danger-button" onClick={deleteMilestone}>
+                Delete item
+              </button>
+            ) : null}
+            <button className="primary-button" onClick={saveMilestone}>
+              {editingMilestoneId ? "Save changes" : "Add item"}
+            </button>
+          </div>
+        </ModalFrame>
       ) : null}
     </div>
   );
 }
 
-async function fetchManualAssignments() {
+async function fetchLegacyManualAssignments() {
   const response = await fetch("/api/assignments");
-  const stored = await response.json();
-  const savedAssignments = Array.isArray(stored)
-    ? stored.map((row) => ({
-        id: row.id,
-        title: row.title,
-        memberId: row.member_id,
-        startKey: row.start_key,
-        endKey: row.end_key,
-        fromJira: row.from_jira,
-        jiraKey: row.jira_key,
-        status: row.status,
-        dueDateKey: row.due_date_key,
-        resolvedKey: row.resolved_key,
-        isDone: row.is_done,
-      }))
-    : [];
+  if (!response.ok) return [];
+  const stored = await response.json().catch(() => []);
 
-  return savedAssignments.filter((item) => !item.fromJira);
+  return Array.isArray(stored)
+    ? stored
+        .map((row) => ({
+          id: row.id,
+          title: row.title,
+          memberId: row.member_id,
+          startKey: row.start_key,
+          endKey: row.end_key,
+          dueDateKey: row.due_date_key,
+          resolvedKey: row.resolved_key,
+          isDone: row.is_done,
+          fromJira: row.from_jira,
+        }))
+        .filter((item) => !item.fromJira)
+    : [];
 }
 
 async function fetchJiraAssignments() {
@@ -995,33 +1489,22 @@ async function fetchJiraAssignments() {
   const activeData = await activeResponse.json().catch(() => ({}));
   const doneData = await doneResponse.json().catch(() => ({}));
 
-  if (!activeResponse.ok) {
-    throw new Error(activeData.error || "Active Jira sync failed.");
-  }
-
-  if (!doneResponse.ok) {
-    throw new Error(doneData.error || "Completed Jira sync failed.");
-  }
+  if (!activeResponse.ok) throw new Error(activeData.error || "Active Jira sync failed.");
+  if (!doneResponse.ok) throw new Error(doneData.error || "Completed Jira sync failed.");
 
   const mapIssue = (issue, isDone) => {
-    const { summary, assignee, duedate } = issue.fields;
-    const member = findMemberByAssignee(assignee);
+    const member = findMemberByAssignee(issue.fields.assignee);
     if (!member) return null;
-
-    const dueDateKey = duedate ? dateKey(parseDate(duedate)) : null;
-    const resolved = issue.fields.transitionDate || issue.fields.resolutiondate;
 
     return {
       id: `jira-${issue.id}`,
-      title: summary,
-      memberId: member.id,
-      startKey: null,
-      endKey: null,
-      fromJira: true,
       jiraKey: issue.key,
-      status: issue.fields.status?.name,
-      dueDateKey,
-      resolvedKey: resolved ? dateKey(new Date(resolved)) : null,
+      title: issue.fields.summary,
+      status: issue.fields.status?.name || "",
+      memberId: member.id,
+      dueDateKey: issue.fields.duedate || "",
+      createdKey: issue.fields.created ? dateKey(new Date(issue.fields.created)) : "",
+      resolvedKey: issue.fields.transitionDate ? dateKey(new Date(issue.fields.transitionDate)) : issue.fields.resolutiondate ? dateKey(new Date(issue.fields.resolutiondate)) : "",
       isDone,
     };
   };
@@ -1034,8 +1517,6 @@ async function fetchJiraAssignments() {
     stats: {
       rawActive: (activeData.issues || []).length,
       rawDone: (doneData.issues || []).length,
-      mappedActive: activeMapped.length,
-      mappedDone: doneMapped.length,
     },
   };
 }
@@ -1043,37 +1524,14 @@ async function fetchJiraAssignments() {
 async function fetchReadyToWorkOptions() {
   const response = await fetch("/api/jira?view=readyDue");
   const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Unable to load Ready to Work Jira items.");
 
-  if (!response.ok) {
-    throw new Error(data.error || "Unable to load Ready to Work Jira items.");
-  }
-
-  return (data.issues || []).map((issue) => {
-    const { summary, assignee, duedate, status } = issue.fields;
-    return {
-      id: `ready-${issue.id}`,
-      jiraKey: issue.key,
-      title: summary,
-      assigneeName: assignee?.displayName || "",
-      dueDateKey: duedate ? dateKey(parseDate(duedate)) : null,
-      status: status?.name || "Ready to Work",
-    };
-  });
-}
-
-async function persistAssignments(list, setSaveStatus) {
-  setSaveStatus("saving");
-  try {
-    const response = await fetch("/api/assignments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ assignments: list }),
-    });
-    if (!response.ok) throw new Error("Save failed");
-    setSaveStatus("saved");
-    window.setTimeout(() => setSaveStatus(null), 1800);
-  } catch (error) {
-    console.error("Persist failed", error);
-    setSaveStatus("error");
-  }
+  return (data.issues || []).map((issue) => ({
+    id: `ready-${issue.id}`,
+    jiraKey: issue.key,
+    title: issue.fields.summary,
+    assigneeName: issue.fields.assignee?.displayName || "",
+    dueDateKey: issue.fields.duedate || "",
+    status: issue.fields.status?.name || "Ready to Work",
+  }));
 }
