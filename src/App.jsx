@@ -940,10 +940,7 @@ export default function App() {
       <header className="pm-topbar">
         <div className="pm-brand">
           <span className="pm-badge">Executive portfolio view</span>
-          <h1>Project hierarchy, Jira operations, and next priorities in one calendar.</h1>
-          <p>
-            Manual top-level projects anchor the roadmap, Jira-synced operational work shows delivery pressure, and priority items stay visible even when they are not staffed or fully dated yet.
-          </p>
+          <h1>Team Project Calendar</h1>
         </div>
         <div className="pm-actions">
           <SaveStatus status={saveStatus} />

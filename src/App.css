@@ -157,6 +157,10 @@
   max-width: 780px;
 }
 
+.pm-brand .pm-badge {
+  margin-bottom: 6px;
+}
+
 .pm-actions,
 .chip-row,
 .modal-actions,
