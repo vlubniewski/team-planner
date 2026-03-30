@@ -8,8 +8,8 @@ const TEAM_MEMBERS = [
   { id: 4, name: "Jason Moore", role: "Web Developer", color: "#7c3aed", initials: "JM", jiraAliases: ["jason moore", "jason"] },
 ];
 
-const HORIZON_OPTIONS = [90, 180, 365];
-const DEFAULT_HORIZON = 180;
+const HORIZON_OPTIONS = [28, 42, 56, 84];
+const DEFAULT_HORIZON = 28;
 const ACTIVE_JIRA_JQL = 'issuetype IN ("[System] Incident", "[System] Service request", Story, "Sub-task", Task, Bug) AND project != ITDS ORDER BY priority DESC, due ASC';
 const DONE_JIRA_JQL = 'statusCategory = Done AND assignee is not EMPTY AND resolutiondate >= -45d ORDER BY resolutiondate DESC';
 const JIRA_BASE = "https://hmpglobal.atlassian.net/browse";
@@ -110,8 +110,8 @@ function findMemberByAssignee(assignee) {
   );
 }
 
-function buildDayColumns(days) {
-  const startDate = startOfDay(addDays(TODAY, -14));
+function buildDayColumns(anchorDate, days) {
+  const startDate = startOfDay(anchorDate);
   return Array.from({ length: days }, (_, index) => {
     const date = addDays(startDate, index);
     return {
@@ -150,11 +150,6 @@ function getSpan(startKey, endKey, horizonStartKey, horizonEndKey) {
   const start = diffDays(horizonStartKey, clampedStart) + 1;
   const end = diffDays(horizonStartKey, clampedEnd) + 2;
   return { start, end };
-}
-
-function getMarkerColumn(key, horizonStartKey) {
-  if (!key) return null;
-  return diffDays(horizonStartKey, key) + 1;
 }
 
 function statusTone(status) {
@@ -209,6 +204,13 @@ function emptyMilestoneForm(projectId = "") {
 
 function chipLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatWindowLabel(startKey, endKey) {
+  return `${parseDate(startKey).toLocaleDateString("en-US", { month: "long", year: "numeric" })} · ${formatDate(startKey, {
+    month: "short",
+    day: "numeric",
+  })} → ${formatDate(endKey, { month: "short", day: "numeric" })}`;
 }
 
 function inferJiraWindow(item) {
@@ -355,196 +357,79 @@ function TimelineScale({ dayColumns, monthGroups }) {
   );
 }
 
-function TimelineBar({ title, startKey, endKey, horizonStartKey, horizonEndKey, tone = "planned", subtitle, compact = false }) {
-  if (!overlapsHorizon(startKey, endKey, horizonStartKey, horizonEndKey)) return null;
-  const span = getSpan(startKey, endKey, horizonStartKey, horizonEndKey);
+function computeMemberStacks(blocks) {
+  const ordered = [...blocks].sort((a, b) => {
+    if (a.startKey !== b.startKey) return a.startKey.localeCompare(b.startKey);
+    const aDuration = diffDays(a.startKey, a.endKey);
+    const bDuration = diffDays(b.startKey, b.endKey);
+    return bDuration - aDuration;
+  });
+
+  const laneEndByIndex = [];
+  return ordered.map((block) => {
+    let lane = 0;
+    while (lane < laneEndByIndex.length && block.startKey <= laneEndByIndex[lane]) {
+      lane += 1;
+    }
+    laneEndByIndex[lane] = block.endKey;
+    return { ...block, lane: lane + 1 };
+  });
+}
+
+function TeamBoardRow({ member, blocks, dayCount, horizonStartKey, horizonEndKey, onOpenProject, onOpenMilestone }) {
+  const stacked = computeMemberStacks(blocks);
+  const laneCount = Math.max(1, stacked.reduce((max, block) => Math.max(max, block.lane), 1));
 
   return (
-    <div
-      className={`timeline-bar ${tone} ${compact ? "compact" : ""}`}
-      style={{ gridColumn: `${span.start} / ${span.end}` }}
-      title={`${title} · ${formatRange(startKey, endKey)}`}
-    >
-      <strong>{title}</strong>
-      {subtitle ? <span>{subtitle}</span> : null}
+    <div className="board-row" style={{ "--lane-count": laneCount }}>
+      <div className="board-member">
+        <div className="member-dot" style={{ background: member.color }} />
+        <div className="member-copy">
+          <strong>{member.name.split(" ")[0]}</strong>
+          <span>{chipLabel(blocks.length, "visible block")}</span>
+        </div>
+      </div>
+      <div className="board-track">
+        <div className="board-grid" style={{ "--day-count": dayCount, "--lane-count": laneCount }}>
+          {stacked.map((block) => {
+            const span = getSpan(block.startKey, block.endKey, horizonStartKey, horizonEndKey);
+            return (
+              <button
+                key={block.id}
+                className={`board-block ${block.kind} ${block.compact ? "compact" : ""}`}
+                style={{
+                  gridColumn: `${span.start} / ${span.end}`,
+                  gridRow: block.lane,
+                  "--block-color": member.color,
+                }}
+                title={`${block.title} · ${formatRange(block.startKey, block.endKey)}`}
+                onClick={() => {
+                  if (block.kind === "project") onOpenProject(block.project);
+                  if (block.kind === "milestone") onOpenMilestone(block.projectId, block.milestone);
+                  if (block.kind === "jira" && block.link) window.open(block.link, "_blank", "noopener,noreferrer");
+                }}
+              >
+                <div className="board-block-copy">
+                  <strong>{block.title}</strong>
+                  {!block.compact ? <span>{block.caption}</span> : null}
+                </div>
+                <span className="board-block-menu">⋮</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
 
-function TimelineMarker({ type, label, dateKeyValue, horizonStartKey, horizonEndKey }) {
-  if (!dateKeyValue || dateKeyValue < horizonStartKey || dateKeyValue > horizonEndKey) return null;
-  const column = getMarkerColumn(dateKeyValue, horizonStartKey);
+function TeamKeyCard({ member, count, active, onClick }) {
   return (
-    <div className={`timeline-marker ${type}`} style={{ gridColumn: `${column} / span 1` }} title={`${label} · ${formatDate(dateKeyValue)}`}>
-      <span>{type === "done" ? "Done" : "Due"}</span>
-    </div>
-  );
-}
-
-function RowGrid({ dayCount, children }) {
-  return (
-    <div className="timeline-row-grid" style={{ "--day-count": dayCount }}>
-      {children}
-    </div>
-  );
-}
-
-function ProjectRow({
-  project,
-  horizonStartKey,
-  horizonEndKey,
-  dayCount,
-  onEditProject,
-  onAddMilestone,
-  onToggleExpanded,
-}) {
-  const owner = findMember(project.ownerId);
-  const doneCount = project.deliverables.filter((item) => item.doneKey).length;
-  const dueCount = project.deliverables.filter((item) => !item.doneKey).length;
-
-  return (
-    <>
-      <div className="timeline-label project parent">
-        <button className="tree-toggle" onClick={() => onToggleExpanded(project.id)}>
-          {project.expanded ? "−" : "+"}
-        </button>
-        <div className="label-stack">
-          <button className="label-title" onClick={() => onEditProject(project)}>
-            {project.title}
-          </button>
-          <div className="label-meta">
-            <span>{owner?.name || "No owner"}</span>
-            <span>{formatRange(project.startKey, project.endKey)}</span>
-            <span className={`tone-pill ${statusTone(project.status)}`}>{project.status}</span>
-          </div>
-        </div>
-        <div className="label-actions">
-          <span>{chipLabel(doneCount, "done item")}</span>
-          <span>{chipLabel(dueCount, "due item")}</span>
-          <button className="subtle-button" onClick={() => onAddMilestone(project.id)}>
-            Add item
-          </button>
-        </div>
-      </div>
-      <RowGrid dayCount={dayCount}>
-        <TimelineBar
-          title={project.title}
-          startKey={project.startKey}
-          endKey={project.endKey}
-          horizonStartKey={horizonStartKey}
-          horizonEndKey={horizonEndKey}
-          tone={statusTone(project.status)}
-          subtitle={owner?.initials || "TM"}
-        />
-      </RowGrid>
-    </>
-  );
-}
-
-function DeliverableRow({ item, project, horizonStartKey, horizonEndKey, dayCount, onEditMilestone }) {
-  const owner = findMember(item.assigneeId);
-  const markerKey = item.doneKey || item.dueKey;
-
-  return (
-    <>
-      <div className="timeline-label project child">
-        <div className="tree-branch" />
-        <div className="label-stack">
-          <button className="label-title child" onClick={() => onEditMilestone(project.id, item)}>
-            {item.title}
-          </button>
-          <div className="label-meta">
-            <span>{owner?.name || "Unassigned"}</span>
-            <span>{item.doneKey ? `Done ${formatDate(item.doneKey)}` : `Due ${formatDate(item.dueKey)}`}</span>
-          </div>
-        </div>
-      </div>
-      <RowGrid dayCount={dayCount}>
-        <TimelineBar
-          title={project.title}
-          startKey={project.startKey}
-          endKey={project.endKey}
-          horizonStartKey={horizonStartKey}
-          horizonEndKey={horizonEndKey}
-          tone="ghost"
-          compact
-        />
-        <TimelineMarker
-          type={item.doneKey ? "done" : "due"}
-          label={item.title}
-          dateKeyValue={markerKey}
-          horizonStartKey={horizonStartKey}
-          horizonEndKey={horizonEndKey}
-        />
-      </RowGrid>
-    </>
-  );
-}
-
-function OpsMemberRow({ member, items, dayCount }) {
-  const openCount = items.filter((item) => !item.isDone).length;
-  const doneCount = items.filter((item) => item.isDone).length;
-
-  return (
-    <>
-      <div className="timeline-label ops parent">
-        <div className="avatar" style={{ "--avatar-accent": member.color }}>
-          {member.initials}
-        </div>
-        <div className="label-stack">
-          <strong className="ops-person-name">{member.name}</strong>
-          <div className="label-meta">
-            <span>{member.role}</span>
-            <span>{chipLabel(openCount, "active Jira item")}</span>
-            <span>{chipLabel(doneCount, "done Jira item")}</span>
-          </div>
-        </div>
-      </div>
-      <RowGrid dayCount={dayCount}>
-        <div className="ops-group-backdrop" />
-      </RowGrid>
-    </>
-  );
-}
-
-function OpsItemRow({ item, horizonStartKey, horizonEndKey, dayCount }) {
-  const member = findMember(item.memberId);
-  const window = inferJiraWindow(item);
-  return (
-    <>
-      <div className="timeline-label ops child">
-        <div className="tree-branch ops" />
-        <div className="label-stack">
-          <a className="label-title child" href={`${JIRA_BASE}/${item.jiraKey}`} target="_blank" rel="noreferrer">
-            {item.title}
-          </a>
-          <div className="label-meta">
-            <span>{item.jiraKey}</span>
-            <span>{member?.name || "Unassigned"}</span>
-            <span>{item.status || (item.isDone ? "Done" : "In flight")}</span>
-          </div>
-        </div>
-      </div>
-      <RowGrid dayCount={dayCount}>
-        <TimelineBar
-          title={item.jiraKey}
-          startKey={window.startKey}
-          endKey={window.endKey}
-          horizonStartKey={horizonStartKey}
-          horizonEndKey={horizonEndKey}
-          tone={item.isDone ? "done" : "ops"}
-          subtitle={item.status}
-          compact
-        />
-        <TimelineMarker
-          type={item.isDone ? "done" : "due"}
-          label={item.title}
-          dateKeyValue={item.isDone ? item.resolvedKey || item.dueDateKey : item.dueDateKey}
-          horizonStartKey={horizonStartKey}
-          horizonEndKey={horizonEndKey}
-        />
-      </RowGrid>
-    </>
+    <button className={`team-key-chip ${active ? "active" : ""}`} onClick={onClick}>
+      <span className="team-key-dot" style={{ background: member.color }} />
+      <strong>{member.name.split(" ")[0]}</strong>
+      <span>{count}</span>
+    </button>
   );
 }
 
@@ -585,6 +470,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState(null);
 
   const [horizonDays, setHorizonDays] = useState(DEFAULT_HORIZON);
+  const [anchorDate, setAnchorDate] = useState(TODAY);
   const [showDone, setShowDone] = useState(true);
   const [visibleMemberIds, setVisibleMemberIds] = useState(TEAM_MEMBERS.map((member) => member.id));
   const [priorityFilter, setPriorityFilter] = useState("all");
@@ -703,10 +589,11 @@ export default function App() {
     };
   }, [authStatus, isHydrated, priorities, projects]);
 
-  const dayColumns = useMemo(() => buildDayColumns(horizonDays), [horizonDays]);
+  const dayColumns = useMemo(() => buildDayColumns(anchorDate, horizonDays), [anchorDate, horizonDays]);
   const monthGroups = useMemo(() => buildMonthGroups(dayColumns), [dayColumns]);
   const horizonStartKey = dayColumns[0]?.key || TODAY_KEY;
   const horizonEndKey = dayColumns[dayColumns.length - 1]?.key || TODAY_KEY;
+  const windowLabel = useMemo(() => formatWindowLabel(horizonStartKey, horizonEndKey), [horizonEndKey, horizonStartKey]);
 
   const visibleProjects = useMemo(() => {
     return projects
@@ -724,21 +611,6 @@ export default function App() {
         return matchesOwner && (matchesTimeline || project.deliverables.length > 0);
       });
   }, [projects, showDone, visibleMemberIds, horizonStartKey, horizonEndKey]);
-
-  const opsGroups = useMemo(() => {
-    return TEAM_MEMBERS.filter((member) => visibleMemberIds.includes(member.id))
-      .map((member) => ({
-        member,
-        items: jiraItems
-          .filter((item) => item.memberId === member.id)
-          .filter((item) => (showDone ? true : !item.isDone))
-          .filter((item) => {
-            const window = inferJiraWindow(item);
-            return overlapsHorizon(window.startKey, window.endKey, horizonStartKey, horizonEndKey);
-          }),
-      }))
-      .filter((group) => group.items.length > 0);
-  }, [jiraItems, visibleMemberIds, showDone, horizonStartKey, horizonEndKey]);
 
   const filteredPriorities = useMemo(() => {
     return priorities.filter((item) => {
@@ -759,6 +631,65 @@ export default function App() {
       overdueOps,
     };
   }, [jiraItems, priorities.length, projects]);
+
+  const memberCalendar = useMemo(() => {
+    return TEAM_MEMBERS.filter((member) => visibleMemberIds.includes(member.id)).map((member) => {
+      const projectBlocks = visibleProjects
+        .filter((project) => project.ownerId === member.id)
+        .map((project) => ({
+          id: `project-block-${project.id}`,
+          kind: "project",
+          title: project.title,
+          caption: formatRange(project.startKey, project.endKey),
+          startKey: project.startKey,
+          endKey: project.endKey,
+          project,
+          compact: false,
+        }));
+
+      const milestoneBlocks = visibleProjects.flatMap((project) =>
+        (project.deliverables || [])
+          .filter((item) => (item.assigneeId || project.ownerId) === member.id)
+          .map((item) => {
+            const markerKey = item.doneKey || item.dueKey;
+            return {
+              id: `milestone-block-${item.id}`,
+              kind: "milestone",
+              title: item.title,
+              caption: item.doneKey ? `Done ${formatDate(item.doneKey)}` : `Due ${formatDate(item.dueKey)}`,
+              startKey: markerKey,
+              endKey: markerKey,
+              projectId: project.id,
+              milestone: item,
+              compact: true,
+            };
+          })
+      );
+
+      const jiraBlocks = jiraItems
+        .filter((item) => item.memberId === member.id)
+        .filter((item) => (showDone ? true : !item.isDone))
+        .map((item) => {
+          const window = inferJiraWindow(item);
+          return {
+            id: `jira-block-${item.id}`,
+            kind: "jira",
+            title: item.title,
+            caption: item.jiraKey,
+            startKey: window.startKey,
+            endKey: window.endKey,
+            compact: false,
+            link: `${JIRA_BASE}/${item.jiraKey}`,
+          };
+        });
+
+      const blocks = [...projectBlocks, ...milestoneBlocks, ...jiraBlocks].filter((block) =>
+        overlapsHorizon(block.startKey, block.endKey, horizonStartKey, horizonEndKey)
+      );
+
+      return { member, blocks };
+    });
+  }, [horizonEndKey, horizonStartKey, jiraItems, showDone, visibleMemberIds, visibleProjects]);
 
   function newId(prefix) {
     nextId.current += 1;
@@ -927,19 +858,6 @@ export default function App() {
     setMilestoneModalOpen(false);
   }
 
-  function toggleExpanded(projectId) {
-    setProjects((current) =>
-      current.map((project) => (project.id === projectId ? { ...project, expanded: !project.expanded } : project))
-    );
-  }
-
-  function toggleMember(memberId) {
-    setVisibleMemberIds((current) => {
-      if (current.includes(memberId)) return current.filter((id) => id !== memberId);
-      return [...current, memberId];
-    });
-  }
-
   async function syncFromJira() {
     setSyncing(true);
     setSyncStatus(null);
@@ -1049,200 +967,175 @@ export default function App() {
 
       {syncStatus ? <div className={`pm-banner ${syncStatus.type}`}>{syncStatus.message}</div> : null}
 
-      <section className="pm-stats">
-        <StatCard label="Top-level projects" value={stats.projects} detail="Manual roadmap items tracked in the executive view" />
-        <StatCard label="Project due and done items" value={stats.milestones} detail="Nested deliverables and milestones under project rows" />
-        <StatCard label="Active Jira operations" value={stats.ops} detail="Operational delivery work synced from Jira" />
-        <StatCard label="Overdue Jira items" value={stats.overdueOps} detail="Operational work already beyond its due date" />
-      </section>
-
-      <section className="control-panel">
-        <div className="control-group">
-          <span className="control-label">Timeline horizon</span>
-          <div className="chip-row">
+      <section className="reference-toolbar">
+        <div className="toolbar-cluster">
+          <button className="icon-button nav-button" onClick={() => setAnchorDate((current) => addDays(current, -7))}>
+            ←
+          </button>
+          <button className="ghost-button today-button" onClick={() => setAnchorDate(TODAY)}>
+            Today
+          </button>
+          <button className="icon-button nav-button" onClick={() => setAnchorDate((current) => addDays(current, 7))}>
+            →
+          </button>
+          <select className="range-select" value={horizonDays} onChange={(event) => setHorizonDays(Number(event.target.value))}>
             {HORIZON_OPTIONS.map((option) => (
-              <FilterChip key={option} active={horizonDays === option} label={`${option} days`} onClick={() => setHorizonDays(option)} />
+              <option key={option} value={option}>
+                {option / 7} weeks
+              </option>
             ))}
-          </div>
+          </select>
         </div>
-
-        <div className="control-group">
-          <span className="control-label">Team filter</span>
-          <div className="chip-row">
-            <FilterChip
-              active={visibleMemberIds.length === TEAM_MEMBERS.length}
-              label="Entire team"
-              onClick={() => setVisibleMemberIds(TEAM_MEMBERS.map((member) => member.id))}
-            />
-            {TEAM_MEMBERS.map((member) => (
-              <button
-                key={member.id}
-                className={`member-chip ${visibleMemberIds.includes(member.id) ? "active" : ""}`}
-                style={{ "--chip-accent": member.color }}
-                onClick={() => toggleMember(member.id)}
-              >
-                {member.name}
-              </button>
-            ))}
-          </div>
+        <div className="toolbar-cluster">
+          <button className="ghost-button" onClick={() => setShowDone((current) => !current)}>
+            {showDone ? "Hide completed" : "Show completed"}
+          </button>
+          <button className="ghost-button" onClick={syncFromJira} disabled={syncing}>
+            {syncing ? "Syncing..." : "Sync Jira"}
+          </button>
+          <button className="primary-button" onClick={() => openProjectModal()}>
+            + Add assignment
+          </button>
         </div>
       </section>
 
-      <section className="dashboard-grid">
-        <div className="portfolio-panel">
-          <div className="panel-head">
-            <div>
-              <div className="section-eyebrow">Roadmap timeline</div>
-              <h2>Strategic projects and operational flow</h2>
-              <p>Scroll horizontally through the calendar to compare parent project windows, nested due/done markers, and Jira operational load by team member.</p>
+      <section className="reference-summary">
+        <article className="summary-card">
+          <div className="summary-card-head">
+            <h3>Window</h3>
+            <span>{`${horizonDays / 7}w • ${dayColumns.length} blocks`}</span>
+          </div>
+          <strong>{windowLabel}</strong>
+          <p>Overlaps show as stacked lanes per teammate so project work, Jira ops, and milestone dates stay visible together.</p>
+        </article>
+        <article className="summary-card">
+          <div className="summary-card-head">
+            <h3>Team key</h3>
+          </div>
+          <div className="team-key-grid">
+            {memberCalendar.map(({ member, blocks }) => (
+              <TeamKeyCard
+                key={member.id}
+                member={member}
+                count={blocks.length}
+                active={visibleMemberIds.includes(member.id)}
+                onClick={() =>
+                  setVisibleMemberIds((current) =>
+                    current.length === 1 && current.includes(member.id) ? TEAM_MEMBERS.map((entry) => entry.id) : [member.id]
+                  )
+                }
+              />
+            ))}
+          </div>
+          <p>Tip: click a name to focus on one teammate, then click again to return to the full team.</p>
+        </article>
+        <article className="summary-card">
+          <div className="summary-card-head">
+            <h3>Overlap handling</h3>
+          </div>
+          <strong>{`${stats.projects} projects • ${stats.ops} active ops items`}</strong>
+          <p>This view keeps strategic project bars, due or done project items, and Jira work in the same teammate lane by stacking overlaps automatically.</p>
+        </article>
+      </section>
+
+      <section className="board-shell">
+        {loading ? (
+          <section className="loading-panel inset">
+            <div className="spinner" />
+            <p>Loading portfolio and Jira data...</p>
+          </section>
+        ) : (
+          <>
+            <div className="board-header">
+              <div className="board-header-left">
+                <span>Team</span>
+              </div>
+              <div className="board-header-right">
+                <TimelineScale dayColumns={dayColumns} monthGroups={monthGroups} />
+              </div>
             </div>
-            <div className="inline-note">Manual portfolio data is saved locally in this browser. Jira work continues to sync from the existing API.</div>
+
+            <div className="board-body">
+              {memberCalendar.map(({ member, blocks }) => (
+                <TeamBoardRow
+                  key={member.id}
+                  member={member}
+                  blocks={blocks}
+                  dayCount={dayColumns.length}
+                  horizonStartKey={horizonStartKey}
+                  horizonEndKey={horizonEndKey}
+                  onOpenProject={openProjectModal}
+                  onOpenMilestone={openMilestoneModal}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="dashboard-grid lower">
+        <div className="portfolio-panel">
+          <div className="panel-head compact">
+            <div>
+              <div className="section-eyebrow">Project hierarchy</div>
+              <h2>Strategic roadmap</h2>
+            </div>
+            <div className="toolbar-cluster compact">
+              <SaveStatus status={saveStatus} />
+              <button className="ghost-button" onClick={handleLogout}>
+                Log out
+              </button>
+            </div>
           </div>
 
-          {loading ? (
-            <section className="loading-panel inset">
-              <div className="spinner" />
-              <p>Loading portfolio and Jira data...</p>
-            </section>
-          ) : (
-            <div className="timeline-shell">
-              <div className="timeline-left">
-                <div className="timeline-left-head">
-                  <span>Hierarchy</span>
-                  <strong>Projects and work items</strong>
-                </div>
-                <div className="timeline-scroll-body">
-                  <div className="section-divider">Strategic projects</div>
-                  {visibleProjects.length ? (
-                    visibleProjects.map((project) => (
-                      <div key={project.id} className="timeline-row-pair">
-                        <ProjectRow
-                          project={project}
-                          horizonStartKey={horizonStartKey}
-                          horizonEndKey={horizonEndKey}
-                          dayCount={dayColumns.length}
-                          onEditProject={openProjectModal}
-                          onAddMilestone={openMilestoneModal}
-                          onToggleExpanded={toggleExpanded}
-                        />
-                        {project.expanded
-                          ? (project.deliverables || []).map((item) => (
-                              <DeliverableRow
-                                key={item.id}
-                                item={item}
-                                project={project}
-                                horizonStartKey={horizonStartKey}
-                                horizonEndKey={horizonEndKey}
-                                dayCount={dayColumns.length}
-                                onEditMilestone={openMilestoneModal}
-                              />
-                            ))
-                          : null}
+          <div className="hierarchy-list">
+            {visibleProjects.length ? (
+              visibleProjects.map((project) => {
+                const owner = findMember(project.ownerId);
+                return (
+                  <article key={project.id} className="hierarchy-card">
+                    <div className="hierarchy-card-head">
+                      <div>
+                        <button className="label-title" onClick={() => openProjectModal(project)}>
+                          {project.title}
+                        </button>
+                        <div className="label-meta">
+                          <span>{owner?.name || "No owner"}</span>
+                          <span>{formatRange(project.startKey, project.endKey)}</span>
+                          <span className={`tone-pill ${statusTone(project.status)}`}>{project.status}</span>
+                        </div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="empty-block">
-                      <p>No projects match the current filters.</p>
-                      <button className="primary-button" onClick={() => openProjectModal()}>
-                        Add the first project
+                      <button className="subtle-button" onClick={() => openMilestoneModal(project.id)}>
+                        Add item
                       </button>
                     </div>
-                  )}
-
-                  <div className="section-divider">Operational work from Jira</div>
-                  {opsGroups.length ? (
-                    opsGroups.map((group) => (
-                      <div key={group.member.id} className="timeline-row-pair">
-                        <OpsMemberRow
-                          member={group.member}
-                          items={group.items}
-                          horizonStartKey={horizonStartKey}
-                          horizonEndKey={horizonEndKey}
-                          dayCount={dayColumns.length}
-                        />
-                        {group.items.map((item) => (
-                          <OpsItemRow
-                            key={item.id}
-                            item={item}
-                            horizonStartKey={horizonStartKey}
-                            horizonEndKey={horizonEndKey}
-                            dayCount={dayColumns.length}
-                          />
-                        ))}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="empty-block compact">
-                      <p>No Jira items match the current horizon and team filters.</p>
+                    <p className="hierarchy-summary">{project.summary || "No executive summary added yet."}</p>
+                    <div className="hierarchy-items">
+                      {(project.deliverables || []).length ? (
+                        project.deliverables.map((item) => (
+                          <button key={item.id} className="hierarchy-item" onClick={() => openMilestoneModal(project.id, item)}>
+                            <span>{item.title}</span>
+                            <span>{item.doneKey ? `Done ${formatDate(item.doneKey)}` : `Due ${formatDate(item.dueKey)}`}</span>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="empty-block compact">
+                          <p>No due or done items yet.</p>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  </article>
+                );
+              })
+            ) : (
+              <div className="empty-block">
+                <p>No projects match the current filters.</p>
+                <button className="primary-button" onClick={() => openProjectModal()}>
+                  Add the first project
+                </button>
               </div>
-
-              <div className="timeline-right">
-                <TimelineScale dayColumns={dayColumns} monthGroups={monthGroups} />
-                <div className="timeline-scroll-body">
-                  <div className="section-divider spacer" />
-                  {visibleProjects.length ? (
-                    visibleProjects.map((project) => (
-                      <div key={project.id} className="timeline-row-pair">
-                        <ProjectRow
-                          project={project}
-                          horizonStartKey={horizonStartKey}
-                          horizonEndKey={horizonEndKey}
-                          dayCount={dayColumns.length}
-                          onEditProject={openProjectModal}
-                          onAddMilestone={openMilestoneModal}
-                          onToggleExpanded={toggleExpanded}
-                        />
-                        {project.expanded
-                          ? (project.deliverables || []).map((item) => (
-                              <DeliverableRow
-                                key={item.id}
-                                item={item}
-                                project={project}
-                                horizonStartKey={horizonStartKey}
-                                horizonEndKey={horizonEndKey}
-                                dayCount={dayColumns.length}
-                                onEditMilestone={openMilestoneModal}
-                              />
-                            ))
-                          : null}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="empty-grid-gap" />
-                  )}
-
-                  <div className="section-divider spacer" />
-                  {opsGroups.length ? (
-                    opsGroups.map((group) => (
-                      <div key={group.member.id} className="timeline-row-pair">
-                        <OpsMemberRow
-                          member={group.member}
-                          items={group.items}
-                          horizonStartKey={horizonStartKey}
-                          horizonEndKey={horizonEndKey}
-                          dayCount={dayColumns.length}
-                        />
-                        {group.items.map((item) => (
-                          <OpsItemRow
-                            key={item.id}
-                            item={item}
-                            horizonStartKey={horizonStartKey}
-                            horizonEndKey={horizonEndKey}
-                            dayCount={dayColumns.length}
-                          />
-                        ))}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="empty-grid-gap" />
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         <aside className="sidebar-panel">
